@@ -123,7 +123,7 @@ class RecurrentRGCN(nn.Module):
                  num_hidden_layers=1, dropout=0, self_loop=False, skip_connect=False, layer_norm=False, input_dropout=0, 
                  hidden_dropout=0, feat_dropout=0, aggregation='cat', weight=1,pre_weight=0.7, discount=0, angle=0, use_static=False, pre_type = 'short', 
                  use_cl= False, temperature=0.007, entity_prediction=False, relation_prediction=False, use_cuda=False,
-                 gpu = 0, analysis=False):
+                 gpu = 0, analysis=False, num_temporal_scales=3):
         super(RecurrentRGCN, self).__init__()
 
         self.decoder_name = decoder_name
@@ -152,6 +152,7 @@ class RecurrentRGCN(nn.Module):
         self.entity_prediction = entity_prediction
         self.emb_rel = None
         self.gpu = gpu
+        self.num_temporal_scales = num_temporal_scales
 
         #linear transformation layers w1, w2, .. w7
         self.w1 = nn.Linear(self.h_dim*2, self.h_dim) #w1: Projects concatenated embeddings (dimension 2h) to hidden dimension h
@@ -163,10 +164,28 @@ class RecurrentRGCN(nn.Module):
         self.w7 = nn.Linear(self.h_dim, self.h_dim)
         self.w_cl = nn.Linear(self.h_dim*2, self.h_dim)
 
+        # Hierarchical attention components
+        self.temporal_scale_attention = nn.ModuleList([nn.Linear(h_dim, 1) for _ in range(num_temporal_scales)])
+        
+        # Cross-scale attention mechanism
+        self.scale_attention = nn.Linear(h_dim, num_temporal_scales)
+        
+        # Scale-specific transformation layers
+        self.scale_transforms = nn.ModuleList([nn.Linear(h_dim, h_dim) for _ in range(num_temporal_scales)])
+        
+        # Temporal scale integration layer
+        self.scale_integration = nn.Linear(h_dim * num_temporal_scales, h_dim)
+
         #Creates trainable parameters for temporal encoding. 
         #These parameters are used to generate time-dependent embeddings through cosine encoding.
+        ##edit
         self.weight_t2 = nn.parameter.Parameter(torch.randn(1, h_dim))
         self.bias_t2 = nn.parameter.Parameter(torch.randn(1, h_dim))
+
+        self.use_fourier_encoding = True
+        self.time_encoding_scales = nn.Parameter(torch.randn(h_dim // 2), requires_grad=True)
+        self.time_encoding_shifts = nn.Parameter(torch.randn(h_dim // 2), requires_grad=True)
+        ##end edit
 
         self.weight_1 = nn.Linear(self.h_dim*2, self.h_dim)
         self.weight_2 = nn.Linear(self.h_dim*2, self.h_dim)
@@ -264,6 +283,45 @@ class RecurrentRGCN(nn.Module):
         else:
             raise NotImplementedError 
 
+    #edit
+    def fourier_time_encoding(self, t, h_dim):
+        """
+        Generates Fourier feature encoding for timestamps
+        
+        Args:
+            t (torch.Tensor): Time values
+            h_dim (int): Dimensionality of the encoding
+        
+        Returns:
+            torch.Tensor: Time-based Fourier feature encoding
+        """
+        # Ensure t is a tensor and moved to the correct device
+        t = torch.as_tensor(t, dtype=torch.float32).to(self.gpu)
+        
+        # Split dimensions for sine and cosine components
+        dim_half = h_dim // 2
+        
+        # Create frequency scales (learned parameters)
+        scales = self.time_encoding_scales.unsqueeze(0)  # [1, dim_half]
+        shifts = self.time_encoding_shifts.unsqueeze(0)  # [1, dim_half]
+        
+        # Compute Fourier features
+        # Learned scaling allows adaptive frequency selection
+        scaled_time = t.unsqueeze(-1) * scales
+        
+        # Add learned shifts to introduce more flexibility
+        shifted_time = scaled_time + shifts
+        
+        # Compute sine and cosine components
+        sin_components = torch.sin(shifted_time)
+        cos_components = torch.cos(shifted_time)
+        
+        # Concatenate sine and cosine to create full encoding
+        time_encoding = torch.cat([sin_components, cos_components], dim=-1)
+        
+        return time_encoding
+
+    ##end edit
     def forward(self,sub_graph,T_idx, query_mask, g_list, static_graph, use_cuda):
         #T_idx: Likely a time index, query_mask: A mask for query entities
         if self.use_static:
@@ -305,7 +363,10 @@ class RecurrentRGCN(nn.Module):
                 #Calculates a time value based on the graph's position in the list.
                 t2 = len(g_list)-i+1
                 #Creates time embeddings using cosine encodings for each entity.
-                h_t = torch.cos(self.weight_t2 * t2 + self.bias_t2).repeat(self.num_ents,1)
+                #edit
+                # h_t = torch.cos(self.weight_t2 * t2 + self.bias_t2).repeat(self.num_ents,1)
+                h_t = self.fourier_time_encoding(t2, self.h_dim).repeat(self.num_ents, 1)
+                #end edit
                 #Concatenates current hidden state with time embeddings and applies a linear transformation.
                 self.h =self.w4(torch.concat([self.h,h_t],dim=1))
                 #Gathers embeddings for edges in the current graph.
@@ -461,7 +522,10 @@ class RecurrentRGCN(nn.Module):
         t1 = torch.tensor(T_idx).cuda().to(self.gpu)
         #Creates time embeddings using cosine encoding, setting time value to 0 (representing current time). 
         #The encoding is repeated for all entities.
-        q_t = torch.cos(self.weight_t2 * 0 + self.bias_t2).repeat(self.num_ents,1)
+        #edit
+        # q_t = torch.cos(self.weight_t2 * 0 + self.bias_t2).repeat(self.num_ents,1)
+        q_t = self.fourier_time_encoding(t1, self.h_dim).repeat(self.num_ents,1)
+        #end edit
         #Concatenates dynamic entity embeddings with time embeddings and applies a linear transformation.
         qe_emb = self.w4(torch.concat([self.dynamic_emb,q_t],dim=1))
         #Retrieves time-aware entity embeddings for the unique entities.
@@ -517,7 +581,40 @@ class RecurrentRGCN(nn.Module):
                 loss_cl += self.get_loss_conv(x1, x2) 
 
         return loss_ent, loss_rel, loss_static, loss_cl
+    #edit
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        """
+        Override state_dict to maintain compatibility
+        """
+        # Get the original state dictionary
+        state = super().state_dict(destination, prefix, keep_vars)
+        
+        # If Fourier encoding is not used, remove these keys to prevent errors
+        if not self.use_fourier_encoding:
+            state.pop(prefix + 'time_encoding_scales', None)
+            state.pop(prefix + 'time_encoding_shifts', None)
+        
+        return state
 
+    def load_state_dict(self, state_dict, strict=True):
+        """
+        Override load_state_dict to handle different state dict configurations
+        """
+        # Remove Fourier encoding keys if not present or if not using Fourier encoding
+        if not self.use_fourier_encoding:
+            state_dict.pop('time_encoding_scales', None)
+            state_dict.pop('time_encoding_shifts', None)
+        
+        # Fallback to original parameters if Fourier encoding keys are missing
+        if strict and (
+            'time_encoding_scales' not in state_dict or 
+            'time_encoding_shifts' not in state_dict
+        ):
+            strict = False
+        
+        # Load state dictionary with adjusted strictness
+        return super().load_state_dict(state_dict, strict)
+    ##end edit
     def all_GCN(self,ent_emb, sub_graph, use_cuda):
         sub_graph = sub_graph.to(self.gpu)
         #This assigns the entity embeddings (ent_emb) to the node features in the subgraph
