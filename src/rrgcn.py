@@ -295,22 +295,22 @@ class RecurrentRGCN(nn.Module):
         Returns:
             torch.Tensor: Time-based Fourier feature encoding
         """
-        # Ensure t is a tensor and moved to the correct device
+        # Ensure t is a tensor and moved to the correct device ; t
         t = torch.as_tensor(t, dtype=torch.float32).to(self.gpu)
         
         # Split dimensions for sine and cosine components
         dim_half = h_dim // 2
         
         # Create frequency scales (learned parameters)
-        scales = self.time_encoding_scales.unsqueeze(0)  # [1, dim_half]
-        shifts = self.time_encoding_shifts.unsqueeze(0)  # [1, dim_half]
+        scales = self.time_encoding_scales.unsqueeze(0)  # [1, dim_half] omega
+        shifts = self.time_encoding_shifts.unsqueeze(0)  # [1, dim_half] phi
         
         # Compute Fourier features
         # Learned scaling allows adaptive frequency selection
-        scaled_time = t.unsqueeze(-1) * scales
+        scaled_time = t.unsqueeze(-1) * scales # omega*time
         
         # Add learned shifts to introduce more flexibility
-        shifted_time = scaled_time + shifts
+        shifted_time = scaled_time + shifts  #omega*time + phi
         
         # Compute sine and cosine components
         sin_components = torch.sin(shifted_time)

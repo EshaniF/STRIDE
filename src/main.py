@@ -363,9 +363,13 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                     input_list = train_list[train_sample_num - args.train_history_len:
                                         train_sample_num]
 
-                subgraph_arr = np.load('../data/{}/his_graph_for/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
-                subgraph_arr_inv = np.load('../data/{}/his_graph_inv/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
-                subg_snap = build_graph(num_nodes, num_rels, subgraph_arr, use_cuda, args.gpu)   #取出采样子图 - Take out the sampling subgraph
+                # subgraph_arr = np.load('../data/{}/his_graph_for/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
+                # subgraph_arr_inv = np.load('../data/{}/his_graph_inv/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
+                # subgraph_arr = np.load('../data/{}/his_graph_for_new_0_3/train_s_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
+                # subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new_0_3/train_o_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
+                subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
+                subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
+                subg_snap = build_graph(num_nodes, num_rels, subgraph_arr, use_cuda, args.gpu)   #Take out the sampling subgraph
                 subg_snap_inv = build_graph(num_nodes, num_rels, subgraph_arr_inv, use_cuda, args.gpu)
 
                 inverse_triples = output[0][:, [2, 1, 0]]
@@ -463,9 +467,9 @@ if __name__ == '__main__':
                         help="use words in relaitons")
     parser.add_argument("--relation-evaluation", action='store_true', default=False,
                         help="save model accordding to the relation evalution")
-    parser.add_argument("--pre-type",  type=str, default="short",
+    parser.add_argument("--pre-type",  type=str, default="all",
                         help=["long","short", "all"])
-    parser.add_argument("--use-cl",  action='store_true', default=False,
+    parser.add_argument("--use-cl",  action='store_true', default=True,
                         help="use the info of  contrastive learning")
     parser.add_argument("--temperature", type=float, default=0.07,
                         help="the temperature of cl")

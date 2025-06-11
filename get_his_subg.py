@@ -7,66 +7,269 @@ import time
 import pickle
 import pandas as pd
 import random
-import torch
 import dgl
 # from torch_geometric.data import Data
 # from torch_geometric.utils import degree
 # from torch_geometric.utils import to_networkx
 
-def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
-    
-    #ff sampling 
-    
-    burn_prob=0.3
-    inverse_triples = triples[:, [2, 1, 0]]
-    inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
-    all_triples = np.concatenate([triples, inverse_triples])
 
-    inverse_subg = subg_arr[:, [2, 1, 0]]
-    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
-    subg_triples = np.concatenate([subg_arr, inverse_subg])
-    df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
-    subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0: 'freq'})
+# def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
+#     # forest fire sampling with degree-biased selection. 
+#     burn_prob=0.2
+#     inverse_triples = triples[:, [2, 1, 0]]
+#     inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+#     all_triples = np.concatenate([triples, inverse_triples])
 
-    def forest_fire():
-        visited_nodes = set()
-        sampled_triples = set()
-        
-        # Start from a random seed node in triples
-        seed_node = random.choice(triples[:, 0])
-        frontier = [seed_node]  # Initialize frontier with the seed node
+#     inverse_subg = subg_arr[:, [2, 1, 0]]
+#     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+#     subg_triples = np.concatenate([subg_arr, inverse_subg])
+#     df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+#     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0: 'freq'})
+#     degrees = subg_df['src'].value_counts().to_dict()
 
-        while frontier:
-            next_frontier = []
-            for node in frontier:
-                if node in visited_nodes:
-                    continue
-                visited_nodes.add(node)
+#     def forest_fire():
+#         visited_nodes = set()
+#         sampled_triples = set()
+#         # random.seed(42)
+#         seed_node = random.choice(triples[:, 0])
+#         frontier = [seed_node]  
 
-                # Get all triples starting from this node
-                node_triples = subg_df[subg_df['src'] == node]
+#         while frontier:
+#             next_frontier = []
+#             for node in frontier:
+#                 if node in visited_nodes:
+#                     continue
+#                 visited_nodes.add(node)
+
+#                 # Get all triples starting from this node
+#                 node_triples = subg_df[subg_df['src'] == node]
                 
-                # Spread to neighbors with burn probability
-                for _, triple in node_triples.iterrows():
-                    if random.random() < burn_prob:
-                        sampled_triples.add((triple['src'], triple['rel'], triple['dst'], triple['freq']))
-                        next_frontier.append(triple['dst'])  # Spread to the destination node
+#                 # Spread to neighbors with degree-biased burn probability
+#                 for _, triple in node_triples.iterrows():
+#                     # Scale burn probability by destination node's degree
+#                     neighbor_degree = degrees.get(triple['dst'], 1)
+#                     degree_biased_prob = burn_prob * (neighbor_degree / max(degrees.values()))
+                    
+                    
+#                     if random.random() < degree_biased_prob:
+                    
+                        
+#                         sampled_triples.add((triple['src'], triple['rel'], triple['dst'], triple['freq']))
+#                         next_frontier.append(triple['dst'])  # Spread to the destination node
 
-            frontier = next_frontier
+#             frontier = next_frontier
         
-        # Convert sampled triples to DataFrame
-        sampled_df = pd.DataFrame(list(sampled_triples), columns=['src', 'rel', 'dst', 'freq'])
-        return sampled_df
+#         # Convert sampled triples to df
+#         sampled_df = pd.DataFrame(list(sampled_triples), columns=['src', 'rel', 'dst', 'freq'])
+#         return sampled_df
 
-    # Retry sampling until both q_tri and q_tri_inv are non-empty
-    while True:
-        sampled_df = forest_fire()
-        q_tri = sampled_df[sampled_df['rel'] < num_rels]  # Filter for original triples
-        q_tri_inv = sampled_df[sampled_df['rel'] >= num_rels]  # Filter for inverse triples
-        if not q_tri.empty and not q_tri_inv.empty:
-            break  # Stop retrying if both are non-empty
+#     # Retry sampling until both q_tri and q_tri_inv are non-empty
+#     while True:
+#         sampled_df = forest_fire()
+#         q_tri = sampled_df[sampled_df['rel'] < num_rels]  # Filter for original triples
+#         q_tri_inv = sampled_df[sampled_df['rel'] >= num_rels]  # Filter for inverse triples
+#         if not q_tri.empty and not q_tri_inv.empty:
+#             break  # Stop retrying if both are non-empty
 
-    return q_tri.reset_index(drop=True), q_tri_inv.reset_index(drop=True)
+#     return q_tri.reset_index(drop=True), q_tri_inv.reset_index(drop=True)
+
+# def get_sample_from_history_graph(subg_arr, s_to_sro, sr_to_sro, sro_to_fre, triples, num_nodes, num_rels):
+#     # Forest Fire Sampling with degree-biased selection and geometric distribution
+#     burn_prob = 0.4
+
+#     # Create inverse triples
+#     inverse_triples = triples[:, [2, 1, 0]]
+#     inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+#     all_triples = np.concatenate([triples, inverse_triples])
+
+#     # Create inverse subgraph triples
+#     inverse_subg = subg_arr[:, [2, 1, 0]]
+#     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+#     subg_triples = np.concatenate([subg_arr, inverse_subg])
+    
+#     # Convert to DataFrame
+#     df = pd.DataFrame(subg_triples, columns=['src', 'rel', 'dst'])
+#     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0: 'freq'})
+#     degrees = subg_df['src'].value_counts().to_dict()  # Get degree of each source node
+
+#     def forest_fire():
+#         visited_nodes = set()
+#         sampled_triples = set()
+#         seed_node = random.choice(triples[:, 0])  # Pick a random starting node
+#         frontier = [seed_node]  
+
+#         while frontier:
+#             next_frontier = []
+#             for node in frontier:
+#                 if node in visited_nodes:
+#                     continue
+#                 visited_nodes.add(node)
+
+#                 # Get all triples starting from this node
+#                 node_triples = subg_df[subg_df['src'] == node]
+
+#                 if not node_triples.empty:
+#                     # Calculate number of neighbors to burn using geometric distribution
+#                     num_to_burn = max(1, np.random.geometric(burn_prob) - 1)  
+
+#                     # Select the top-N neighbors based on degree bias
+#                     sorted_neighbors = node_triples.sort_values(by='freq', ascending=False)  # Bias towards high-degree
+#                     selected_triples = sorted_neighbors.head(num_to_burn)  # Select top-N neighbors
+
+#                     for _, triple in selected_triples.iterrows():
+#                         sampled_triples.add((triple['src'], triple['rel'], triple['dst'], triple['freq']))
+#                         next_frontier.append(triple['dst'])  # Add new frontier nodes
+
+#             frontier = next_frontier
+        
+#         # Convert sampled triples to DataFrame
+#         sampled_df = pd.DataFrame(list(sampled_triples), columns=['src', 'rel', 'dst', 'freq'])
+#         return sampled_df
+
+#     # Retry sampling until both q_tri and q_tri_inv are non-empty
+#     while True:
+#         sampled_df = forest_fire()
+#         q_tri = sampled_df[sampled_df['rel'] < num_rels]  # Original triples
+#         q_tri_inv = sampled_df[sampled_df['rel'] >= num_rels]  # Inverse triples
+#         if not q_tri.empty and not q_tri_inv.empty:
+#             break  # Stop retrying if both are non-empty
+
+#     return q_tri.reset_index(drop=True), q_tri_inv.reset_index(drop=True)
+
+# def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
+#     
+#     #forest fire sampling 
+#     
+#     burn_prob=0.3
+#     inverse_triples = triples[:, [2, 1, 0]]
+#     inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+#     all_triples = np.concatenate([triples, inverse_triples])
+
+#     inverse_subg = subg_arr[:, [2, 1, 0]]
+#     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+#     subg_triples = np.concatenate([subg_arr, inverse_subg])
+#     df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+#     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0: 'freq'})
+
+#     def forest_fire():
+#         visited_nodes = set()
+#         sampled_triples = set()
+        
+#         # Start from a random seed node in triples
+#         seed_node = random.choice(triples[:, 0])
+#         frontier = [seed_node]  # Initialize frontier with the seed node
+
+#         while frontier:
+#             next_frontier = []
+#             for node in frontier:
+#                 if node in visited_nodes:
+#                     continue
+#                 visited_nodes.add(node)
+
+#                 # Get all triples starting from this node
+#                 node_triples = subg_df[subg_df['src'] == node]
+                
+#                 # Spread to neighbors with burn probability
+#                 for _, triple in node_triples.iterrows():
+#                     if random.random() < burn_prob:
+#                         sampled_triples.add((triple['src'], triple['rel'], triple['dst'], triple['freq']))
+#                         next_frontier.append(triple['dst'])  # Spread to the destination node
+
+#             frontier = next_frontier
+        
+#         # Convert sampled triples to DataFrame
+#         sampled_df = pd.DataFrame(list(sampled_triples), columns=['src', 'rel', 'dst', 'freq'])
+#         return sampled_df
+
+#     # Retry sampling until both q_tri and q_tri_inv are non-empty
+#     while True:
+#         sampled_df = forest_fire()
+#         q_tri = sampled_df[sampled_df['rel'] < num_rels]  # Filter for original triples
+#         q_tri_inv = sampled_df[sampled_df['rel'] >= num_rels]  # Filter for inverse triples
+#         if not q_tri.empty and not q_tri_inv.empty:
+#             break  # Stop retrying if both are non-empty
+
+#     return q_tri.reset_index(drop=True), q_tri_inv.reset_index(drop=True)
+
+# def forest_fire_sampling(df, burning_ratio=0.3, forward_prob=0.3, backward_prob=0.3):
+    # Forest Fire sampling on a graph represented as a DataFrame
+#     """
+#     # Get unique nodes
+#     all_nodes = set(df['src'].unique()) | set(df['dst'].unique())
+    
+#     # Initialize sets for burning and burned nodes
+#     burning = set()
+#     burned = set()
+    
+#     # Start with a random node
+#     if len(all_nodes) > 0:
+#         burning.add(random.choice(list(all_nodes)))
+    
+#     sampled_edges = []
+    
+#     while burning:
+#         # Get a burning node
+#         current_node = burning.pop()
+#         burned.add(current_node)
+        
+#         # Get forward edges (outgoing)
+#         forward_edges = df[df['src'] == current_node]
+#         if not forward_edges.empty:
+#             # Sample forward edges based on burning ratio
+#             num_forward = int(max(1, len(forward_edges) * forward_prob))
+#             sampled_forward = forward_edges.sample(n=min(num_forward, len(forward_edges)))
+#             sampled_edges.extend(sampled_forward.values.tolist())
+            
+#             # Add unburned neighbors to burning set
+#             for _, edge in sampled_forward.iterrows():
+#                 if edge['dst'] not in burned and random.random() < burning_ratio:
+#                     burning.add(edge['dst'])
+        
+#         # Get backward edges (incoming)
+#         backward_edges = df[df['dst'] == current_node]
+#         if not backward_edges.empty:
+#             # Sample backward edges based on burning ratio
+#             num_backward = int(max(1, len(backward_edges) * backward_prob))
+#             sampled_backward = backward_edges.sample(n=min(num_backward, len(backward_edges)))
+#             sampled_edges.extend(sampled_backward.values.tolist())
+            
+#             # Add unburned neighbors to burning set
+#             for _, edge in sampled_backward.iterrows():
+#                 if edge['src'] not in burned and random.random() < burning_ratio:
+#                     burning.add(edge['src'])
+    
+#     return pd.DataFrame(sampled_edges, columns=['src', 'rel', 'dst'])
+
+# def get_sample_from_history_graph(subg_arr, triples, num_nodes, num_rels):
+#     # Immediate for ff sampling above
+#     inverse_triples = triples[:, [2, 1, 0]]
+#     inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+#     all_triples = np.concatenate([triples, inverse_triples])
+    
+#     er_list = list(set([(tri[0], tri[1]) for tri in triples]))
+#     er_list_inv = list(set([(tri[0], tri[1]) for tri in inverse_triples]))
+    
+#     inverse_subg = subg_arr[:, [2, 1, 0]]
+#     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+#     subg_triples = np.concatenate([subg_arr, inverse_subg])
+    
+#     df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+#     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'})
+#     subg_df['sr'] = list(zip(subg_df.src, subg_df.rel))
+    
+#     # Filter and apply Forest Fire sampling
+#     result_df = subg_df[subg_df['sr'].isin(er_list)]
+#     result_df = result_df.drop(columns=['sr'])
+#     sampled_df = forest_fire_sampling(result_df)
+#     q_tri = sampled_df.to_numpy()
+    
+#     # Process inverse triples
+#     result_df_inv = subg_df[subg_df['sr'].isin(er_list_inv)]
+#     result_df_inv = result_df_inv.drop(columns=['sr'])
+#     sampled_df_inv = forest_fire_sampling(result_df_inv)
+#     q_tri_inv = sampled_df_inv.to_numpy()
+    
+#     return q_tri, q_tri_inv
 
 # def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
 # ### weighted sampling for src nodes
@@ -96,7 +299,7 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 #     # df['deg'] = np.NaN
 #     df['deg'] = df['src'].apply(lambda x: degrs.get(x))
 #     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
-#     subg_df = subg_df.sample(frac=0.1, replace=False, weights='deg', random_state=42)
+#     subg_df = subg_df.sample(frac=0.2, replace=False, weights='deg', random_state=42)
 #     # subg_df['sr'] = list(zip(subg_df.src, subg_df.rel))
 #     subg_df = subg_df.drop(columns=['deg'])
 
@@ -112,6 +315,37 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 
 #     q_tri = result.to_numpy()
 #     q_tri_inv = result_inv.to_numpy()
+
+#     return  q_tri,q_tri_inv
+
+# def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
+# ### simple random sampling 
+#     random.seed(42)
+#     #calculation of inverse triplets
+#     # q_to_sro = defaultdict(list)
+#     q_to_sro = set()
+#     inverse_triples = triples[:, [2, 1, 0]]
+#     inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+#     all_triples = np.concatenate([triples, inverse_triples])
+#     # ent_set = set(all_triples[:, 0])
+#     src_set = set(triples[:, 0])
+#     dst_set = set(triples[:, 2])
+
+#     # ---------------- Second-Order Neighbor Sampling -----------------------
+#     # er_list = list(set([(tri[0],tri[1]) for tri in all_triples]))
+#     er_list = list(set([(tri[0],tri[1]) for tri in triples]))
+#     er_list_inv = list(set([(tri[0],tri[1]) for tri in inverse_triples]))
+#     # ent_list = list(ent_set)
+#     # rel_list = list(set(all_triples[:, 1]))
+
+#     inverse_subg = subg_arr[:, [2, 1, 0]]
+#     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+#     subg_triples = np.concatenate([subg_arr, inverse_subg])
+#     df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+#     #Integrate repeated triplets and count the frequency of triplets, The frequency of the triples is used as the fourth column of data
+#     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
+#     q_tri = subg_df.sample(frac=0.022, random_state=42).to_numpy()
+#     q_tri_inv = subg_df.sample(frac=0.022, random_state=42).to_numpy()
 
 #     return  q_tri,q_tri_inv
 
@@ -146,7 +380,7 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 #     df_dic =  pd.DataFrame({'sr': keys, 'dst': values}) #Convert the query field to pandas
 
 #     dst_df = df_dic.query('sr in @er_list')  #Get query entities and relationships pandas
-#     dst_dff = dst_df.sample(frac=0.1, replace=False, random_state=42)
+#     dst_dff = dst_df.sample(frac=0.3, replace=False, random_state=42)
 #     dst_get = dst_dff['dst'].values    #Get the target tail entity
 #     two_ent = set().union(*dst_get)   #Integrate the head entity with the tail entity
 #     two_ent = set(random.sample(list(two_ent), k=round(len(two_ent) * 0.3)))
@@ -166,35 +400,35 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 
 #     return  q_tri,q_tri_inv
 
-
-def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
-    ## stratified sampling strata with relations
-    inverse_triples = triples[:, [2, 1, 0]]
-    inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
-    all_triples = np.concatenate([triples, inverse_triples])
-    ent_set = set(all_triples[:, 0])
-    src_set = set(triples[:, 0])
-    src_list = list(src_set)
-    dst_set = set(triples[:, 2])
-    dst_list = list(dst_set)
-    er_list = list(set([(tri[0],tri[1]) for tri in triples]))
-    er_list_inv = list(set([(tri[0],tri[1]) for tri in inverse_triples]))
+# def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
+#     ## stratified sampling strata with relations
+#     inverse_triples = triples[:, [2, 1, 0]]
+#     inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+#     all_triples = np.concatenate([triples, inverse_triples])
+#     ent_set = set(all_triples[:, 0])
+#     src_set = set(triples[:, 0])
+#     src_list = list(src_set)
+#     dst_set = set(triples[:, 2])
+#     dst_list = list(dst_set)
+#     er_list = list(set([(tri[0],tri[1]) for tri in triples]))
+#     er_list_inv = list(set([(tri[0],tri[1]) for tri in inverse_triples]))
     
-    inverse_subg = subg_arr[:, [2, 1, 0]]
-    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
-    subg_triples = np.concatenate([subg_arr, inverse_subg])
-    df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
-    subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
+    
+#     inverse_subg = subg_arr[:, [2, 1, 0]]
+#     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+#     subg_triples = np.concatenate([subg_arr, inverse_subg])
+#     df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+#     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
 
-    result_df = subg_df[subg_df['src'].isin(src_list)]
-    result =  result_df.groupby('rel').sample(frac=0.3, random_state=42)
-    q_tri = result.to_numpy()
+#     result_df = subg_df[subg_df['src'].isin(src_list)]
+#     result =  result_df.groupby('rel').sample(frac=0.3, random_state=42)
+#     q_tri = result.to_numpy()
 
-    result_df_inv = subg_df[subg_df['src'].isin(dst_list)]
-    result_inv = result_df_inv.groupby('rel').sample(frac=0.3, random_state=42)
-    q_tri_inv = result_inv.to_numpy()
+#     result_df_inv = subg_df[subg_df['src'].isin(dst_list)]
+#     result_inv = result_df_inv.groupby('rel').sample(frac=0.3, random_state=42)
+#     q_tri_inv = result_inv.to_numpy()
 
-    return  q_tri,q_tri_inv
+#     return  q_tri,q_tri_inv
 
 # def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
 # ###random sampling from 1st hop only (no second hop)
@@ -217,19 +451,19 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 #     subg_df['sr'] = list(zip(subg_df.src, subg_df.rel))
 
 #     result_df = subg_df[subg_df['sr'].isin(er_list)]
-#     result_df.drop(columns=['sr'])
-#     result = result_df.sample(frac=0.1, replace=False, random_state=42)
+#     result_df = result_df.drop(columns=['sr'])
+#     result = result_df.sample(frac=0.01, replace=False, random_state=42)
 #     q_tri = result.to_numpy()
 
 #     result_df_inv = subg_df[subg_df['sr'].isin(er_list_inv)]
-#     result_df_inv.drop(columns=['sr'])
-#     result_inv = result_df_inv.sample(frac=0.1, replace=False, random_state=42)
+#     result_df_inv = result_df_inv.drop(columns=['sr'])
+#     result_inv = result_df_inv.sample(frac=0.01, replace=False, random_state=42)
 #     q_tri_inv = result_inv.to_numpy()
 
 #     return  q_tri,q_tri_inv
 
 # def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
-#### random sampling from 2nd hop + all first hop
+# ### original upto and including all 2nd hop
 #     random.seed(42)
 #     #calculation of inverse triplets
 #     # q_to_sro = defaultdict(list)
@@ -252,23 +486,22 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 #     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
 #     subg_triples = np.concatenate([subg_arr, inverse_subg])
 #     df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
-#     #整合重复三元组并统计三元组的频率，将三元组的频率作为第四列数据
 #     #Integrate repeated triplets and count the frequency of triplets, The frequency of the triples is used as the fourth column of data
 #     subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
 #     keys = list(sr_to_sro.keys())
 #     values = list(sr_to_sro.values())
-#     df_dic =  pd.DataFrame({'sr': keys, 'dst': values}) #将查询字段转化为pandas - Convert the query field to pandas
+#     df_dic =  pd.DataFrame({'sr': keys, 'dst': values}) #Convert the query field to pandas
 
-#     dst_df = df_dic.query('sr in @er_list')  #获取查询实体和关系的pandas - Get query entities and relationships pandas
-#     dst_get = dst_df['dst'].values    #获取目标尾实体 - Get the target tail entity
-#     two_ent = set().union(*dst_get)   #将头实体与尾实体进行整合 - Integrate the head entity with the tail entity
+#     dst_df = df_dic.query('sr in @er_list')  #Get query entities and relationships pandas
+#     dst_get = dst_df['dst'].values    #Get the target tail entity
+#     two_ent = set().union(*dst_get)   #Integrate the head entity with the tail entity
 #     two_ent = set(random.sample(list(two_ent), k=round(len(two_ent) * 0.3)))
 #     all_ent = list(src_set|two_ent)   
 #     result = subg_df.query('src in @all_ent')
 
-#     dst_df_inv = df_dic.query('sr in @er_list_inv')  #获取查询实体和关系的pandas - Get query entities and relationships pandas
-#     dst_get_inv = dst_df_inv['dst'].values    #获取目标尾实体 - Get the target tail entity
-#     two_ent_inv = set().union(*dst_get_inv)   #将头实体与尾实体进行整合 - Integrate the head entity with the tail entity
+#     dst_df_inv = df_dic.query('sr in @er_list_inv')  #Get query entities and relationships pandas
+#     dst_get_inv = dst_df_inv['dst'].values    #Get the target tail entity
+#     two_ent_inv = set().union(*dst_get_inv)   #Integrate the head entity with the tail entity
 #     two_ent_inv = set(random.sample(list(two_ent_inv), k=round(len(two_ent_inv) * 0.3)))
 #     all_ent_inv = list(dst_set|two_ent_inv)  
 #     result_inv = subg_df.query('src in @all_ent_inv')
@@ -277,6 +510,54 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 #     q_tri_inv = result_inv.to_numpy()
 
 #     return  q_tri,q_tri_inv
+
+def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, triples,num_nodes, num_rels):
+    ###original
+    #calculation of inverse triplets
+    # q_to_sro = defaultdict(list)
+    q_to_sro = set()
+    inverse_triples = triples[:, [2, 1, 0]]
+    inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+    all_triples = np.concatenate([triples, inverse_triples])
+    # ent_set = set(all_triples[:, 0])
+    src_set = set(triples[:, 0])
+    dst_set = set(triples[:, 2])
+
+    # ---------------- Second-Order Neighbor Sampling -----------------------
+    # er_list = list(set([(tri[0],tri[1]) for tri in all_triples]))
+    er_list = list(set([(tri[0],tri[1]) for tri in triples]))
+    er_list_inv = list(set([(tri[0],tri[1]) for tri in inverse_triples]))
+    # ent_list = list(ent_set)
+    # rel_list = list(set(all_triples[:, 1]))
+
+    inverse_subg = subg_arr[:, [2, 1, 0]]
+    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+    subg_triples = np.concatenate([subg_arr, inverse_subg])
+    df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+    
+    # Integrate repeated triples and count the frequency of triples, using the frequency of triples as the fourth column of data
+    subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
+    keys = list(sr_to_sro.keys()) #keys = (s,r)
+    values = list(sr_to_sro.values()) # values = {o}
+    df_dic =  pd.DataFrame({'sr': keys, 'dst': values}) #Convert query field to pandas; dictionary with (s, r) as keys and {o} as values
+    #dataframe.query : Query the columns of a DataFrame with a boolean expression and give rows which satify the condition.
+    #only get (s,r) in er_list (<- triplets) which appear in df_dic (<- sr_to_sro)
+    dst_df = df_dic.query('sr in @er_list')  #Get query entities and relationships pandas
+    dst_get = dst_df['dst'].values    #Get the target tail entity
+    two_ent = set().union(*dst_get)   #find unique dst entities
+    all_ent = list(src_set|two_ent)  #union without repetition 
+    result = subg_df.query('src in @all_ent')
+
+    dst_df_inv = df_dic.query('sr in @er_list_inv')  #Get query entities and relationships pandas
+    dst_get_inv = dst_df_inv['dst'].values    #Get the target tail entity
+    two_ent_inv = set().union(*dst_get_inv)   #Integrate the head entity with the tail entity
+    all_ent_inv = list(dst_set|two_ent_inv)  
+    result_inv = subg_df.query('src in @all_ent_inv')
+
+    q_tri = result.to_numpy()
+    q_tri_inv = result_inv.to_numpy()
+
+    return  q_tri,q_tri_inv
 
 
 def update_dict(subg_arr, s_to_sro, sr_to_sro,num_rels):
@@ -364,20 +645,25 @@ def get_data_with_t(data, tim):
     return np.array(triples)
 
 # dataset_list = ["ICEWS14", "ICEWS18","ICEWS05-15"]
-dataset_list = ["ICEWS14"]
-#dataset_list = ["ICEWS14"]
+dataset_list = ["ICEWS18"]
 for dataset in dataset_list:
     train_data, train_times = load_quadruples('data/{}'.format(dataset), 'train.txt')
     num_nodes,num_rels= get_total_number('data/{}'.format(dataset), 'stat.txt')
-    # print("the number of entity and relation", num_nodes,num_rels)
+    print("the number of entity and relation", num_nodes,num_rels)
 
     train_list = split_by_time(train_data)
     id_list = [_ for _ in range(len(train_list))]
-    sample_len = 3
+    # sample_len = 3
 
-    save_dir_subg = 'datanew/{}/his_graph_for/'.format(dataset)
-    save_dir_obj = 'datanew/{}/his_graph_inv/'.format(dataset)
-    save_dir_sub = 'datanew/{}/his_dict/'.format(dataset)
+    # save_dir_subg = '../{}/his_graph_for/'.format(dataset)
+    # save_dir_obj = '../{}/his_graph_inv/'.format(dataset)
+    # save_dir_sub = '../{}/his_dict/'.format(dataset)
+    # save_dir_subg = 'data/{}/his_graph_for/'.format(dataset)
+    # save_dir_obj = 'data/{}/his_graph_inv/'.format(dataset)
+    # save_dir_sub = 'data/{}/his_dict/'.format(dataset)
+    save_dir_subg = 'data/{}/his_graph_for_new/'.format(dataset)
+    save_dir_obj = 'data/{}/his_graph_inv_new/'.format(dataset)
+    save_dir_sub = 'data/{}/his_dict_new/'.format(dataset)
 
     def mkdirs(path):
         if not os.path.exists(path):
@@ -397,9 +683,9 @@ for dataset in dataset_list:
     print("------------{}sample history graph-------------------------------------".format(dataset))
     all_list= train_list
     idx = [_ for _ in range(len(all_list))]
+    snaplen = []
     for train_sample_num in idx:
     # for train_sample_num in tqdm(idx):
-    # for train_sample_num in range (3):
         if train_sample_num == 0: continue
         output = all_list[train_sample_num:train_sample_num+1]
         history_graph = all_list[train_sample_num-1:train_sample_num]
@@ -408,13 +694,20 @@ for dataset in dataset_list:
             his_list = all_list[:train_sample_num]
             subg_arr = np.concatenate(his_list)
             sub_snap,sub_snap_inv = get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, output[0], num_nodes,num_rels)
-            # print(sub_snap)
-            print(len(sub_snap))
+            print('length of sub snap is', len(sub_snap))
+            snaplen.append(len(sub_snap))
+            print(train_sample_num)
         #.npy files are binary files to store numpy arrays.
-        np.save('datanew/{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
-        np.save('datanew/{}/his_graph_inv/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
-    np.save('datanew/{}/his_dict/train_s_r.npy'.format(dataset), sr_to_sro)
-    # print(sub_snap)
+        # np.save('../{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
+        # np.save('../{}/his_graph_inv/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
+        # np.save('data/{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
+        # np.save('data/{}/his_graph_inv/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
+        np.save('data/{}/his_graph_for_new/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
+        np.save('data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
+    # np.save('../{}/his_dict/train_s_r.npy'.format(dataset), sr_to_sro)
+    # np.save('data/{}/his_dict/train_s_r.npy'.format(dataset), sr_to_sro)
+    np.save('data/{}/his_dict_new/train_s_r.npy'.format(dataset), sr_to_sro)
+    print('sum of snap lengths ',sum(snaplen))
     # arr = np.load('./{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num))
     # print(arr)
     # print(len(sr_to_sro.keys()))
