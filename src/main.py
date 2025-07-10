@@ -111,7 +111,171 @@ def get_sample_from_history_graph3(subg_arr, sr_to_sro, triples,num_nodes, num_r
     his_sub_inv = build_graph(num_nodes, num_rels, q_tri_inv, use_cuda, gpu)
     return  his_sub,his_sub_inv
 
+class CurriculumScheduler:
+    """
+    Curriculum Learning scheduler for temporal knowledge graph training.
+    Implements different curriculum strategies based on various difficulty metrics.
+    """
+    
+    def __init__(self, strategy='cosine', difficulty_metric='frequency', 
+                 start_ratio=0.2, end_ratio=1.0, warmup_epochs=5):
+        """
+        Args:
+            strategy: 'linear', 'exponential', 'step', or 'cosine'
+            difficulty_metric: 'frequency', 'rarity', 'temporal_distance', 'degree'
+            start_ratio: Initial fraction of training data to use
+            end_ratio: Final fraction of training data to use
+            warmup_epochs: Number of epochs to reach full curriculum
+        """
+        self.strategy = strategy
+        self.difficulty_metric = difficulty_metric
+        self.start_ratio = start_ratio
+        self.end_ratio = end_ratio
+        self.warmup_epochs = warmup_epochs
+        
+    def get_current_ratio(self, epoch, total_epochs):
+        """Calculate current curriculum ratio based on epoch and strategy"""
+        if epoch >= self.warmup_epochs:
+            return self.end_ratio
+            
+        progress = epoch / self.warmup_epochs
+        
+        if self.strategy == 'linear':
+            ratio = self.start_ratio + (self.end_ratio - self.start_ratio) * progress
+        elif self.strategy == 'exponential':
+            ratio = self.start_ratio * ((self.end_ratio / self.start_ratio) ** progress)
+        elif self.strategy == 'step':
+            # Step function with 3 stages
+            if progress < 0.33:
+                ratio = self.start_ratio
+            elif progress < 0.66:
+                ratio = (self.start_ratio + self.end_ratio) / 2
+            else:
+                ratio = self.end_ratio
+        elif self.strategy == 'cosine':
+            ratio = self.start_ratio + (self.end_ratio - self.start_ratio) * \
+                   (1 - np.cos(progress * np.pi)) / 2
+        else:
+            ratio = self.end_ratio
+            
+        return min(ratio, self.end_ratio)
 
+class DifficultyAnalyzer:
+    """
+    Analyzes training samples to determine their difficulty based on various metrics.
+    """
+    
+    def __init__(self, train_list, num_nodes, num_rels):
+        self.train_list = train_list
+        self.num_nodes = num_nodes
+        self.num_rels = num_rels
+        self.difficulty_scores = {}
+        self._compute_statistics()
+        
+    def _compute_statistics(self):
+        """Compute various statistics for difficulty assessment"""
+        # Combine all training triples
+        all_triples = np.concatenate(self.train_list)
+        
+        # Entity frequency
+        self.entity_freq = defaultdict(int)
+        for triple in all_triples:
+            self.entity_freq[triple[0]] += 1
+            self.entity_freq[triple[2]] += 1
+            
+        # Relation frequency
+        self.relation_freq = defaultdict(int)
+        for triple in all_triples:
+            self.relation_freq[triple[1]] += 1
+            
+        # Entity degree (number of unique relations)
+        self.entity_degree = defaultdict(set)
+        for triple in all_triples:
+            self.entity_degree[triple[0]].add(triple[1])
+            self.entity_degree[triple[2]].add(triple[1])
+            
+    def compute_difficulty_scores(self, metric='frequency'):
+        """
+        Compute difficulty scores for each time step.
+        Lower scores indicate easier samples.
+        """
+        difficulty_scores = []
+        
+        for t, snap in enumerate(self.train_list):
+            if metric == 'frequency':
+                # Based on entity and relation frequency (lower frequency = harder)
+                scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    entity_score = min(self.entity_freq[s], self.entity_freq[o])
+                    relation_score = self.relation_freq[r]
+                    scores.append(1.0 / (1.0 + entity_score + relation_score))
+                score = np.mean(scores)
+                
+            elif metric == 'rarity':
+                # Based on entity rarity
+                scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    entity_rarity = 1.0 / (1.0 + min(self.entity_freq[s], self.entity_freq[o]))
+                    relation_rarity = 1.0 / (1.0 + self.relation_freq[r])
+                    scores.append(entity_rarity + relation_rarity)
+                score = np.mean(scores)
+                
+            elif metric == 'temporal_distance':
+                # Based on temporal distance from beginning
+                score = t / len(self.train_list)
+                
+            elif metric == 'degree':
+                # Based on entity degree complexity
+                scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    degree_complexity = len(self.entity_degree[s]) + len(self.entity_degree[o])
+                    scores.append(degree_complexity)
+                score = np.mean(scores)
+                
+            else:
+                score = 1.0  # Default uniform difficulty
+                
+            difficulty_scores.append(score)
+            
+        return np.array(difficulty_scores)
+
+def get_curriculum_samples(train_list, difficulty_scores, current_ratio, strategy='easy_first'):
+    """
+    Get training samples based on curriculum learning strategy.
+    
+    Args:
+        train_list: List of training snapshots
+        difficulty_scores: Difficulty score for each snapshot
+        current_ratio: Current ratio of data to include
+        strategy: 'easy_first', 'hard_first', or 'mixed'
+    """
+    n_samples = int(len(train_list) * current_ratio)
+    n_samples = max(1, min(n_samples, len(train_list)))
+    
+    if strategy == 'easy_first':
+        # Sort by difficulty (ascending - easiest first)
+        sorted_indices = np.argsort(difficulty_scores)
+        selected_indices = sorted_indices[:n_samples]
+    elif strategy == 'hard_first':
+        # Sort by difficulty (descending - hardest first)
+        sorted_indices = np.argsort(difficulty_scores)[::-1]
+        selected_indices = sorted_indices[:n_samples]
+    elif strategy == 'mixed':
+        # Mix of easy and hard samples
+        sorted_indices = np.argsort(difficulty_scores)
+        easy_count = n_samples // 2
+        hard_count = n_samples - easy_count
+        easy_indices = sorted_indices[:easy_count]
+        hard_indices = sorted_indices[-hard_count:]
+        selected_indices = np.concatenate([easy_indices, hard_indices])
+    else:
+        # Random sampling (baseline)
+        selected_indices = np.random.choice(len(train_list), n_samples, replace=False)
+    
+    return sorted(selected_indices)
 
 def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_list, all_ans_r_list, model_name, static_graph, mode):
     """
@@ -152,7 +316,7 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
 
     his_list = history_list[:]
     subg_arr = np.concatenate(his_list)
-    sr_to_sro = np.load('../data/{}/his_dict/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
+    sr_to_sro = np.load('../data/{}/his_dict_new/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
 
     
     for time_idx, test_snap in enumerate(tqdm(test_list)):
@@ -236,8 +400,9 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
     
 
 def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=None):
-    global mrr_raw, mrr_filter
-    mrr_raw, mrr_filter = [], []
+    """
+    Enhanced version of run_experiment with curriculum learning support.
+    """
     # load configuration for grid search the best configuration
     if n_hidden:
         args.n_hidden = n_hidden
@@ -258,18 +423,40 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_nodes = data.num_nodes
     num_rels = data.num_rels
 
+    # Initialize curriculum learning components
+    curriculum_scheduler = CurriculumScheduler(
+        strategy=getattr(args, 'curriculum_strategy', 'linear'),
+        difficulty_metric=getattr(args, 'difficulty_metric', 'frequency'),
+        start_ratio=getattr(args, 'curriculum_start_ratio', 0.2),
+        end_ratio=getattr(args, 'curriculum_end_ratio', 1.0),
+        warmup_epochs=getattr(args, 'curriculum_warmup_epochs', 20)
+    )
+    
+    difficulty_analyzer = DifficultyAnalyzer(train_list, num_nodes, num_rels)
+    difficulty_scores = difficulty_analyzer.compute_difficulty_scores(
+        curriculum_scheduler.difficulty_metric
+    )
+    
+    print(f"Curriculum Learning Settings:")
+    print(f"  Strategy: {curriculum_scheduler.strategy}")
+    print(f"  Difficulty Metric: {curriculum_scheduler.difficulty_metric}")
+    print(f"  Start Ratio: {curriculum_scheduler.start_ratio}")
+    print(f"  Warmup Epochs: {curriculum_scheduler.warmup_epochs}")
+
+    # Load answer lists for evaluation
     all_ans_list_test = utils.load_all_answers_for_time_filter(data.test, num_rels, num_nodes, False)
     all_ans_list_r_test = utils.load_all_answers_for_time_filter(data.test, num_rels, num_nodes, True)
     all_ans_list_valid = utils.load_all_answers_for_time_filter(data.valid, num_rels, num_nodes, False)
     all_ans_list_r_valid = utils.load_all_answers_for_time_filter(data.valid, num_rels, num_nodes, True)
+    
     model_name = "{}-len{}-gpu{}-lr{}-{}-{}-{}-{}-{}-{}-{}"\
         .format(args.dataset, args.train_history_len, args.gpu, args.lr, args.temperature,args.pre_weight, args.use_cl, args.pre_type,  args.n_hidden, args.encoder,str(time.time()))
     model_state_file = '../models/' + 'esh' 
     print("Sanity Check: stat name : {}".format(model_state_file))
     print("Sanity Check: Is cuda available ? {}".format(torch.cuda.is_available()))
-
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
 
+    # Static graph setup (if applicable)
     if args.add_static_graph:
         static_triples = np.array(_read_triplets_as_list("../data/" + args.dataset + "/e-w-graph.txt", {}, {}, load_time=False))
         num_static_rels = len(np.unique(static_triples[:, 1]))
@@ -280,8 +467,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     else:
         num_static_rels, num_words, static_triples, static_graph = 0, 0, [], None
 
-
-    # create stat
+    # Create model
     model = RecurrentRGCN(args.decoder,
                           args.encoder,
                         num_nodes,
@@ -303,17 +489,17 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                         feat_dropout=args.feat_dropout,
                         aggregation=args.aggregation,
                         weight=args.weight,
-                        pre_weight = args.pre_weight,
+                        pre_weight=args.pre_weight,
                         discount=args.discount,
                         angle=args.angle,
                         use_static=args.add_static_graph,
-                        pre_type = args.pre_type,
-                        use_cl = args.use_cl,
-                        temperature = args.temperature,
+                        pre_type=args.pre_type,
+                        use_cl=args.use_cl,
+                        temperature=args.temperature,
                         entity_prediction=args.entity_prediction,
                         relation_prediction=args.relation_prediction,
                         use_cuda=use_cuda,
-                        gpu = args.gpu,
+                        gpu=args.gpu,
                         analysis=args.run_analysis)
 
     if use_cuda:
@@ -327,7 +513,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
 
     if args.test and os.path.exists(model_state_file):
-        mrr_raw, mrr_filter= test(model,
+        mrr_raw, mrr_filter = test(model,
                                 train_list+valid_list, 
                                 test_list, 
                                 num_rels, 
@@ -341,10 +527,11 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     elif args.test and not os.path.exists(model_state_file):
         print("--------------{} not exist, Change mode to train and generate stat for testing----------------\n".format(model_state_file))
     else:
-        print("----------------------------------------start training----------------------------------------\n")
+        print("----------------------------------------start training with curriculum learning----------------------------------------\n")
         best_mrr = 0
-        #his_best tracks how many evaluations have passed without improvement for early stopping.
         his_best = 0
+        
+        # Training loop with curriculum learning
         for epoch in range(args.n_epochs):
             model.train()
             losses = []
@@ -352,55 +539,65 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
             losses_r = []
             losses_static = []
 
-            idx = [_ for _ in range(len(train_list))]
+            # Get current curriculum ratio and samples
+            current_ratio = curriculum_scheduler.get_current_ratio(epoch, args.n_epochs)
+            selected_indices = get_curriculum_samples(
+                train_list, 
+                difficulty_scores, 
+                current_ratio,
+                strategy=getattr(args, 'curriculum_sample_strategy', 'hard_first')
+            )
+            
+            print(f"Epoch {epoch}: Using {len(selected_indices)}/{len(train_list)} samples (ratio: {current_ratio:.3f})")
 
-            for train_sample_num in tqdm(idx):
-                if train_sample_num == 0: continue
+            for train_sample_num in tqdm(selected_indices):
+                if train_sample_num == 0: 
+                    continue
+                    
                 output = train_list[train_sample_num:train_sample_num+1]
-                if train_sample_num - args.train_history_len<0:
+                if train_sample_num - args.train_history_len < 0:
                     input_list = train_list[0: train_sample_num]
                 else:
                     input_list = train_list[train_sample_num - args.train_history_len:
                                         train_sample_num]
 
-                # subgraph_arr = np.load('../data/{}/his_graph_for/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
-                # subgraph_arr_inv = np.load('../data/{}/his_graph_inv/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
-                # subgraph_arr = np.load('../data/{}/his_graph_for_new_0_3/train_s_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
-                # subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new_0_3/train_o_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
-                subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
-                subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num), allow_pickle=True)
-                subg_snap = build_graph(num_nodes, num_rels, subgraph_arr, use_cuda, args.gpu)   #Take out the sampling subgraph
+                # Load subgraph data
+                subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
+                subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
+                subg_snap = build_graph(num_nodes, num_rels, subgraph_arr, use_cuda, args.gpu)
                 subg_snap_inv = build_graph(num_nodes, num_rels, subgraph_arr_inv, use_cuda, args.gpu)
 
                 inverse_triples = output[0][:, [2, 1, 0]]
                 inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
-                que_pair =  e2r(output[0], num_rels)
-                que_pair_inv =  e2r(inverse_triples, num_rels)
-                # generate history graph
+                que_pair = e2r(output[0], num_rels)
+                que_pair_inv = e2r(inverse_triples, num_rels)
+                
+                # Generate history graph
                 history_glist = [build_sub_graph(num_nodes, num_rels, snap, use_cuda, args.gpu) for snap in input_list]
                 triples = torch.from_numpy(output[0]).long().cuda()
                 inverse_triples = torch.from_numpy(inverse_triples).long().cuda() 
+                
                 for id in range(2): 
-                    if id %2 ==0: 
+                    if id % 2 == 0: 
                         loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair, subg_snap, train_sample_num, history_glist, triples, static_graph, use_cuda)
                     else:
-                        loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair_inv, subg_snap_inv, train_sample_num, history_glist, inverse_triples,static_graph, use_cuda)
+                        loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair_inv, subg_snap_inv, train_sample_num, history_glist, inverse_triples, static_graph, use_cuda)
 
-                    loss = loss_e+ loss_static +loss_cl
+                    loss = loss_e + loss_static + loss_cl
                 
                     losses.append(loss.item())
                     losses_e.append(loss_e.item())
                     losses_r.append(loss_r.item())
                     losses_static.append(loss_static.item())
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)  # clip gradients
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)
                     optimizer.step()
                     optimizer.zero_grad()
-                # break
-            print("Epoch {:04d} | Ave Loss: {:.4f} | entity-relation-static:{:.4f}-{:.4f}-{:.4f} Best MRR {:.4f} | Model {} "
-                  .format(epoch, np.mean(losses), np.mean(losses_e), np.mean(losses_r), np.mean(losses_static), best_mrr, model_name))
 
-            # validation
+            print("Epoch {:04d} | Ave Loss: {:.4f} | entity-relation-static:{:.4f}-{:.4f}-{:.4f} | Curriculum Ratio: {:.3f} | Best MRR {:.4f} | Model {} "
+                  .format(epoch, np.mean(losses), np.mean(losses_e), np.mean(losses_r), np.mean(losses_static), current_ratio, best_mrr, model_name))
+
+            # Validation
             if epoch and epoch % args.evaluate_every == 0:
                 mrr_raw, mrr_filter = test(model, 
                                     train_list, 
@@ -414,20 +611,20 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                                     static_graph, 
                                     mode="train")
                 
-                if not args.relation_evaluation:  # entity prediction evalution
+                if not args.relation_evaluation:
                     if mrr_filter < best_mrr:
                         his_best += 1
                         if epoch >= args.n_epochs:
-                            print('the break statement 1 stopped the training')
                             break
-                        if his_best>=5:
-                            print('the break statement 2 stopped the training')
+                        if his_best >= 5:
                             break
                     else:
-                        his_best=0
+                        his_best = 0
                         best_mrr = mrr_filter
                         torch.save({'state_dict': model.state_dict(), 'epoch': epoch}, model_state_file)
             torch.cuda.empty_cache()
+            
+        # Final testing
         mrr_raw, mrr_filter = test(model, 
                             train_list+valid_list,
                             test_list, 
@@ -467,9 +664,9 @@ if __name__ == '__main__':
                         help="use words in relaitons")
     parser.add_argument("--relation-evaluation", action='store_true', default=False,
                         help="save model accordding to the relation evalution")
-    parser.add_argument("--pre-type",  type=str, default="all",
+    parser.add_argument("--pre-type",  type=str, default="short",
                         help=["long","short", "all"])
-    parser.add_argument("--use-cl",  action='store_true', default=True,
+    parser.add_argument("--use-cl",  action='store_true', default=False,
                         help="use the info of  contrastive learning")
     parser.add_argument("--temperature", type=float, default=0.07,
                         help="the temperature of cl")

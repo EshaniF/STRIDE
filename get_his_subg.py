@@ -645,7 +645,7 @@ def get_data_with_t(data, tim):
     return np.array(triples)
 
 # dataset_list = ["ICEWS14", "ICEWS18","ICEWS05-15"]
-dataset_list = ["ICEWS18"]
+dataset_list = ["ICEWS14"]
 for dataset in dataset_list:
     train_data, train_times = load_quadruples('data/{}'.format(dataset), 'train.txt')
     num_nodes,num_rels= get_total_number('data/{}'.format(dataset), 'stat.txt')
