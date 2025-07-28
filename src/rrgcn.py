@@ -436,9 +436,35 @@ class RecurrentRGCN(nn.Module):
         pred3 = torch.mm(z1, z1.T)
         pred4 = torch.mm(z2, z2.T)
         labels = torch.arange(pred1.shape[0]).to(self.gpu)
+        train_cl_loss = loss_fn(pred1 / self.temp, labels) 
+        
+        
+        # Add hard negative mining for better contrastive learning
+        
+        # Find hard negatives (high similarity but not positive pairs)
+        with torch.no_grad():
+            mask = torch.eye(pred1.shape[0], device=self.gpu).bool()
+            pred1_masked = pred1.masked_fill(mask, -float('inf'))
+            pred2_masked = pred2.masked_fill(mask, -float('inf'))
+            
+            # Get top-k hard negatives
+            k = min(10, pred1.shape[0] - 1)
+            _, hard_neg_idx1 = torch.topk(pred1_masked, k, dim=1)
+            _, hard_neg_idx2 = torch.topk(pred2_masked, k, dim=1)
+        
+        # Compute hard negative loss
+        hard_neg_loss1 = -torch.log(
+            1 - F.softmax(pred1.gather(1, hard_neg_idx1) / self.temp, dim=1)
+        ).mean()
+        hard_neg_loss2 = -torch.log(
+            1 - F.softmax(pred2.gather(1, hard_neg_idx2) / self.temp, dim=1)
+        ).mean()
+        
+        hard_neg_loss = (hard_neg_loss1 + hard_neg_loss2) / 2
+        train_cl_loss += 0.1 * hard_neg_loss
         # train_cl_loss =(loss_fn(pred2 / self.temp, labels) + loss_fn(pred3 / self.temp, labels)) / 2
         # train_cl_loss =loss_fn(pred1 / self.temp, labels)
         # train_cl_loss =loss_fn(pred4 / self.temp, labels)
         # train_cl_loss =(loss_fn(pred1 / self.temp, labels) +loss_fn(pred2 / self.temp, labels) + loss_fn(pred3 / self.temp, labels)) / 3
-        train_cl_loss =(loss_fn(pred1 / self.temp, labels) + loss_fn(pred2 / self.temp, labels)+loss_fn(pred3 / self.temp, labels) + loss_fn(pred4 / self.temp, labels)) / 4
+        # train_cl_loss =(loss_fn(pred1 / self.temp, labels) + loss_fn(pred2 / self.temp, labels)+loss_fn(pred3 / self.temp, labels) + loss_fn(pred4 / self.temp, labels)) / 4
         return train_cl_loss

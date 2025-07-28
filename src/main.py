@@ -426,8 +426,8 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     # Initialize curriculum learning components
     curriculum_scheduler = CurriculumScheduler(
         strategy=getattr(args, 'curriculum_strategy', 'linear'),
-        difficulty_metric=getattr(args, 'difficulty_metric', 'frequency'),
-        start_ratio=getattr(args, 'curriculum_start_ratio', 0.2),
+        difficulty_metric=getattr(args, 'difficulty_metric', 'degree'),
+        start_ratio=getattr(args, 'curriculum_start_ratio', 0.3),
         end_ratio=getattr(args, 'curriculum_end_ratio', 1.0),
         warmup_epochs=getattr(args, 'curriculum_warmup_epochs', 20)
     )
@@ -545,7 +545,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                 train_list, 
                 difficulty_scores, 
                 current_ratio,
-                strategy=getattr(args, 'curriculum_sample_strategy', 'hard_first')
+                strategy=getattr(args, 'curriculum_sample_strategy', 'easy_first')
             )
             
             print(f"Epoch {epoch}: Using {len(selected_indices)}/{len(train_list)} samples (ratio: {current_ratio:.3f})")
@@ -692,7 +692,20 @@ if __name__ == '__main__':
     parser.add_argument("--n-hidden", type=int, default=200,
                         help="number of hidden units")
     
-
+    # #config for curriculum learning
+    # parser.add_argument("--curriculum_strategy", type=str, default="linear", # 'linear', 'exponential', 'step', 'cosine'
+    #                     help="curriculum strategy")
+    # parser.add_argument("--difficulty_metric", type=str, default="frequency", # 'frequency', 'rarity', 'temporal_distance', 'degree'
+    #                     help="difficulty metric")
+    # parser.add_argument("--curriculum_start_ratio", type=float, default=0.1, 
+    #                     help="curriculum start ratio")
+    # parser.add_argument("--curriculum_end_ratio", type=float, default=1.0, 
+    #                     help="curriculum end ratio")
+    # parser.add_argument("--curriculum_warmup_epochs", type=int, default=5,  #Reach full curriculum in 5 epochs
+    #                     help="curriculum epochs")
+    # parser.add_argument("--curriculum_sample_strategy", type=str, default="easy_first",  # 'easy_first', 'hard_first', 'mixed'
+    #                     help="curriculum strategy")
+ 
     parser.add_argument("--n-bases", type=int, default=100,
                         help="number of weight blocks for each relation")
     parser.add_argument("--n-basis", type=int, default=100,
