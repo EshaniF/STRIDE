@@ -123,7 +123,7 @@ class RecurrentRGCN(nn.Module):
                  num_hidden_layers=1, dropout=0, self_loop=False, skip_connect=False, layer_norm=False, input_dropout=0, 
                  hidden_dropout=0, feat_dropout=0, aggregation='cat', weight=1,pre_weight=0.7, discount=0, angle=0, use_static=False, pre_type = 'short', 
                  use_cl= False, temperature=0.007, entity_prediction=False, relation_prediction=False, use_cuda=False,
-                 gpu = 0, analysis=False):
+                 gpu = 0, analysis=False, cl_approach="cosine_positive"):
         super(RecurrentRGCN, self).__init__()
 
         self.decoder_name = decoder_name
@@ -152,6 +152,7 @@ class RecurrentRGCN(nn.Module):
         self.entity_prediction = entity_prediction
         self.emb_rel = None
         self.gpu = gpu
+        self.cl_approach = cl_approach
 
         self.w1 = nn.Linear(self.h_dim*2, self.h_dim)
         
@@ -427,6 +428,25 @@ class RecurrentRGCN(nn.Module):
         return F.normalize(his_emb),subg_index
 
     def get_loss_conv(self, ent1_emb, ent2_emb):
+        """
+        Modified contrastive loss with different approaches
+        """
+        if self.cl_approach == "cosine_positive":
+            
+            return self.get_loss_conv_cosine_positive(ent1_emb, ent2_emb)
+        elif self.cl_approach == "barlow_twins":
+            return self.get_loss_conv_barlow_twins(ent1_emb, ent2_emb)
+        elif self.cl_approach == "mse_positive":
+            return self.get_loss_conv_mse_positive(ent1_emb, ent2_emb)
+        elif self.cl_approach == "temporal_consistency":
+            return self.get_loss_conv_temporal_consistency(ent1_emb, ent2_emb)
+        elif self.cl_approach == "laplace":
+            return self.get_loss_conv_lap(ent1_emb, ent2_emb)
+        else:
+            # Keep your original method as default
+            return self.get_loss_conv_original(ent1_emb, ent2_emb)
+    
+    def get_loss_conv_original(self, ent1_emb, ent2_emb):
 
         loss_fn = nn.CrossEntropyLoss().to(self.gpu)
         z1 = self.projection_model(ent1_emb)
@@ -436,35 +456,113 @@ class RecurrentRGCN(nn.Module):
         pred3 = torch.mm(z1, z1.T)
         pred4 = torch.mm(z2, z2.T)
         labels = torch.arange(pred1.shape[0]).to(self.gpu)
-        train_cl_loss = loss_fn(pred1 / self.temp, labels) 
-        
-        
-        # Add hard negative mining for better contrastive learning
-        
-        # Find hard negatives (high similarity but not positive pairs)
-        with torch.no_grad():
-            mask = torch.eye(pred1.shape[0], device=self.gpu).bool()
-            pred1_masked = pred1.masked_fill(mask, -float('inf'))
-            pred2_masked = pred2.masked_fill(mask, -float('inf'))
-            
-            # Get top-k hard negatives
-            k = min(10, pred1.shape[0] - 1)
-            _, hard_neg_idx1 = torch.topk(pred1_masked, k, dim=1)
-            _, hard_neg_idx2 = torch.topk(pred2_masked, k, dim=1)
-        
-        # Compute hard negative loss
-        hard_neg_loss1 = -torch.log(
-            1 - F.softmax(pred1.gather(1, hard_neg_idx1) / self.temp, dim=1)
-        ).mean()
-        hard_neg_loss2 = -torch.log(
-            1 - F.softmax(pred2.gather(1, hard_neg_idx2) / self.temp, dim=1)
-        ).mean()
-        
-        hard_neg_loss = (hard_neg_loss1 + hard_neg_loss2) / 2
-        train_cl_loss += 0.1 * hard_neg_loss
-        # train_cl_loss =(loss_fn(pred2 / self.temp, labels) + loss_fn(pred3 / self.temp, labels)) / 2
-        # train_cl_loss =loss_fn(pred1 / self.temp, labels)
-        # train_cl_loss =loss_fn(pred4 / self.temp, labels)
-        # train_cl_loss =(loss_fn(pred1 / self.temp, labels) +loss_fn(pred2 / self.temp, labels) + loss_fn(pred3 / self.temp, labels)) / 3
-        # train_cl_loss =(loss_fn(pred1 / self.temp, labels) + loss_fn(pred2 / self.temp, labels)+loss_fn(pred3 / self.temp, labels) + loss_fn(pred4 / self.temp, labels)) / 4
+        # train_cl_loss =loss_fn(pred1 / self.temp, labels) 
+        train_cl_loss =(loss_fn(pred1 / self.temp, labels) + loss_fn(pred2 / self.temp, labels)+loss_fn(pred3 / self.temp, labels) + loss_fn(pred4 / self.temp, labels)) / 4
         return train_cl_loss
+
+    def get_loss_conv_cosine_positive(self, ent1_emb, ent2_emb):
+        """
+        RECOMMENDED: Maximize cosine similarity between positive pairs only
+        """
+        z1 = F.normalize(self.projection_model(ent1_emb), dim=1)
+        z2 = F.normalize(self.projection_model(ent2_emb), dim=1)
+        
+        # Cosine similarity between corresponding pairs
+        cos_sim = F.cosine_similarity(z1, z2, dim=1)
+        
+        # Maximize similarity (minimize negative similarity)
+        loss = -cos_sim.mean()
+        return loss
+
+    def get_loss_conv_barlow_twins(self, ent1_emb, ent2_emb):
+        """
+        Barlow Twins approach: positive-only with redundancy reduction
+        """
+        z1 = F.normalize(self.projection_model(ent1_emb), dim=1)
+        z2 = F.normalize(self.projection_model(ent2_emb), dim=1)
+        
+        # Cross-correlation matrix
+        c = torch.mm(z1.T, z2) / z1.shape[0]
+        
+        # Loss: encourage diagonal to be 1, off-diagonal to be 0
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = c.flatten()[1:].view(c.shape[0]-1, c.shape[0]+1)[:, :-1].pow_(2).sum()
+        
+        loss = on_diag + 0.005 * off_diag  # 0.005 is lambda for off-diagonal terms
+        return loss
+
+    def get_loss_conv_mse_positive(self, ent1_emb, ent2_emb):
+        """
+        Simple MSE loss between positive pairs
+        """
+        z1 = self.projection_model(ent1_emb)
+        z2 = self.projection_model(ent2_emb)
+        
+        # L2 distance between positive pairs
+        loss = F.mse_loss(z1, z2)
+        return loss
+
+    def get_loss_conv_temporal_consistency(self, ent1_emb, ent2_emb):
+        """
+        Temporal-aware contrastive learning
+        """
+        z1 = F.normalize(self.projection_model(ent1_emb), dim=1)
+        z2 = F.normalize(self.projection_model(ent2_emb), dim=1)
+        
+        # Positive pairs (current and historical embeddings should be similar)
+        pos_sim = F.cosine_similarity(z1, z2, dim=1)
+        temporal_loss = -pos_sim.mean()
+        
+        # Optional: encourage smooth temporal evolution
+        if len(ent1_emb) > 1:
+            # Consecutive time steps should have similar changes
+            z1_diff = z1[1:] - z1[:-1]
+            z2_diff = z2[1:] - z2[:-1]
+            smoothness_loss = F.mse_loss(z1_diff, z2_diff)
+            temporal_loss += 0.1 * smoothness_loss
+        
+        return temporal_loss
+
+    def get_loss_conv_lap(self, ent1_emb, ent2_emb):
+        # Transform embeddings ####paper results code
+        
+        loss_fn = nn.CrossEntropyLoss().to(self.gpu)
+        z1 = self.projection_model(ent1_emb)  
+        z2 = self.projection_model(ent2_emb)  
+
+        pred1 = torch.mm(z1, z2.T)
+        labels = torch.arange(pred1.shape[0]).to(self.gpu)
+
+        # Contrastive Loss 
+        loss1 = loss_fn(pred1 / self.temp, labels)
+
+
+        # train_cl_loss = (loss1 + loss2 + loss3 + loss4) / 4
+        train_cl_loss = loss1
+
+        # Similarity Matrix (using Gaussian similarity)
+        sim_matrix_ent1 = torch.exp(-torch.cdist(z1, z1, p=2))  # Gaussian similarity between pairs in z1
+        sim_matrix_ent2 = torch.exp(-torch.cdist(z2, z2, p=2))  # Gaussian similarity between pairs in z2
+
+        def normalized_laplacian_loss(embeddings, similarity_matrix):
+            # similarity_matrix = torch.exp(-torch.cdist(embeddings, embeddings, p=2))
+            # degree matrix D
+            degree_matrix = torch.diag(torch.sum(similarity_matrix, dim=1))
+
+            # normalized Laplacian L_norm = D^(-1/2) * (D - S) * D^(-1/2)
+            D_inv_sqrt = torch.diag(1.0 / torch.sqrt(degree_matrix.diag() + 1e-8))  # epsilon for numerical stability
+            laplacian_matrix = torch.mm(torch.mm(D_inv_sqrt, degree_matrix - similarity_matrix), D_inv_sqrt)
+
+            # normalized Laplacian loss: Z^T *L_norm* Z
+            loss = torch.trace(torch.mm(torch.mm(embeddings.T, laplacian_matrix), embeddings))
+            return loss/embeddings.shape[0]
+
+        # Normalized Laplacian Loss
+        norm_laplacian_loss_ent1 = normalized_laplacian_loss(z1, sim_matrix_ent1)
+        norm_laplacian_loss_ent2 = normalized_laplacian_loss(z2, sim_matrix_ent2)
+
+        # Contrastive Loss and Normalized Laplacian Loss
+        alpha = 0.05
+        total_loss = train_cl_loss + alpha * (norm_laplacian_loss_ent1 + norm_laplacian_loss_ent2)
+
+        return total_loss

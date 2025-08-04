@@ -15,6 +15,7 @@ sys.path.append("..")
 from rgcn import utils
 from rgcn.utils import build_sub_graph, build_graph
 from src.rrgcn import RecurrentRGCN
+# from src.hyperparameter_range import hp_range
 import torch.nn.modules.rnn
 from collections import defaultdict
 from rgcn.knowledge_graph import _read_triplets_as_list
@@ -111,185 +112,122 @@ def get_sample_from_history_graph3(subg_arr, sr_to_sro, triples,num_nodes, num_r
     his_sub_inv = build_graph(num_nodes, num_rels, q_tri_inv, use_cuda, gpu)
     return  his_sub,his_sub_inv
 
-class GeneralCurriculumScheduler:
+class DifficultyAnalyzer:
     """
-    General curriculum learning scheduler that adapts to any temporal knowledge graph dataset.
-    Uses adaptive strategies based on data characteristics discovered during training.
-    """
-    
-    def __init__(self, total_epochs=50, warmup_ratio=0.4, strategy='adaptive'):
-        """
-        Args:
-            total_epochs: Total number of training epochs
-            warmup_ratio: Fraction of epochs for curriculum warmup (0.4 = 40%)
-            strategy: 'adaptive', 'linear', or 'cosine'
-        """
-        self.total_epochs = total_epochs
-        self.warmup_epochs = int(total_epochs * warmup_ratio)
-        self.strategy = strategy
-        self.start_ratio = 0.2  # Start with 20% of data
-        
-    def get_current_ratio(self, epoch):
-        """Calculate current curriculum ratio based on epoch and strategy"""
-        if epoch >= self.warmup_epochs:
-            return 1.0
-            
-        progress = epoch / self.warmup_epochs
-        
-        if self.strategy == 'adaptive':
-            # Adaptive strategy: starts slow, accelerates in middle, slows at end
-            # Good for both highly skewed (GDELT) and regular (ICEWS) datasets
-            ratio = self.start_ratio + (1.0 - self.start_ratio) * (
-                0.5 * (1 - np.cos(progress * np.pi)) + 0.3 * progress
-            )
-        elif self.strategy == 'cosine':
-            # Smooth cosine progression
-            ratio = self.start_ratio + (1.0 - self.start_ratio) * (1 - np.cos(progress * np.pi)) / 2
-        else:
-            # Linear progression (default)
-            ratio = self.start_ratio + (1.0 - self.start_ratio) * progress
-            
-        return min(ratio, 1.0)
-
-class GeneralDifficultyAnalyzer:
-    """
-    General difficulty analyzer that works for any temporal knowledge graph dataset.
-    Combines multiple difficulty metrics to handle various data characteristics.
+    Analyzes training samples to determine their difficulty based on various metrics.
     """
     
-    def __init__(self, train_list):
+    def __init__(self, train_list, num_nodes, num_rels):
         self.train_list = train_list
-        self.all_triples = np.concatenate(train_list) if train_list else np.array([])
+        self.num_nodes = num_nodes
+        self.num_rels = num_rels
+        self.difficulty_scores = {}
         self._compute_statistics()
         
     def _compute_statistics(self):
-        """Compute comprehensive statistics for difficulty assessment"""
-        if len(self.all_triples) == 0:
-            self.entity_freq = defaultdict(int)
-            self.relation_freq = defaultdict(int)
-            self.entity_degree = defaultdict(set)
-            return
-            
-        # Entity and relation frequencies
+        """Compute various statistics for difficulty assessment"""
+        # Combine all training triples
+        all_triples = np.concatenate(self.train_list)
+        
+        # Entity frequency
         self.entity_freq = defaultdict(int)
+        for triple in all_triples:
+            self.entity_freq[triple[0]] += 1
+            self.entity_freq[triple[2]] += 1
+            
+        # Relation frequency
         self.relation_freq = defaultdict(int)
+        for triple in all_triples:
+            self.relation_freq[triple[1]] += 1
+            
+        # Entity degree (number of unique relations)
         self.entity_degree = defaultdict(set)
-        
-        for triple in self.all_triples:
-            s, r, o = triple
-            self.entity_freq[s] += 1
-            self.entity_freq[o] += 1
-            self.relation_freq[r] += 1
-            # Track entity degrees (number of unique relations)
-            self.entity_degree[s].add(r)
-            self.entity_degree[o].add(r)
-        
-        # Compute distribution statistics for adaptive difficulty
-        entity_freqs = list(self.entity_freq.values())
-        self.entity_freq_std = np.std(entity_freqs) if entity_freqs else 0
-        self.entity_freq_mean = np.mean(entity_freqs) if entity_freqs else 0
-        
-        relation_freqs = list(self.relation_freq.values())
-        self.relation_freq_std = np.std(relation_freqs) if relation_freqs else 0
-        self.relation_freq_mean = np.mean(relation_freqs) if relation_freqs else 0
-        
-    def compute_difficulty_scores(self):
+        for triple in all_triples:
+            self.entity_degree[triple[0]].add(triple[1])
+            self.entity_degree[triple[2]].add(triple[1])
+            
+    def compute_difficulty_scores(self, metric='frequency'):
         """
-        Compute difficulty scores using multiple metrics.
-        Combines temporal, frequency, and structural complexity.
+        Compute difficulty scores for each time step.
+        Lower scores indicate easier samples.
         """
         difficulty_scores = []
         
         for t, snap in enumerate(self.train_list):
-            if len(snap) == 0:
-                difficulty_scores.append(0.5)  # Neutral difficulty for empty snapshots
-                continue
-            
-            # 1. Temporal difficulty (later = more complex due to accumulated history)
-            temporal_score = t / len(self.train_list)
-            
-            # 2. Frequency-based difficulty (rare entities/relations = harder)
-            frequency_scores = []
-            for triple in snap:
-                s, r, o = triple
-                s_freq = self.entity_freq.get(s, 1)
-                o_freq = self.entity_freq.get(o, 1)
-                r_freq = self.relation_freq.get(r, 1)
+            if metric == 'frequency':
+                # Based on entity and relation frequency (lower frequency = harder)
+                scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    entity_score = min(self.entity_freq[s], self.entity_freq[o])
+                    relation_score = self.relation_freq[r]
+                    scores.append(1.0 / (1.0 + entity_score + relation_score))
+                score = np.mean(scores)
                 
-                # Inverse frequency score (lower frequency = higher difficulty)
-                entity_rarity = 2.0 / (s_freq + o_freq)
-                relation_rarity = 1.0 / r_freq
-                frequency_scores.append(entity_rarity + relation_rarity * 0.5)
+            elif metric == 'rarity':
+                # Based on entity rarity
+                scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    entity_rarity = 1.0 / (1.0 + min(self.entity_freq[s], self.entity_freq[o]))
+                    relation_rarity = 1.0 / (1.0 + self.relation_freq[r])
+                    scores.append(entity_rarity + relation_rarity)
+                score = np.mean(scores)
+                
+            elif metric == 'temporal_distance':
+                # Based on temporal distance from beginning
+                score = t / len(self.train_list)
+                
+            elif metric == 'degree':
+                # Based on entity degree complexity
+                scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    degree_complexity = len(self.entity_degree[s]) + len(self.entity_degree[o])
+                    scores.append(degree_complexity)
+                score = np.mean(scores)
+                
+            else:
+                score = 1.0  # Default uniform difficulty
+                
+            difficulty_scores.append(score)
             
-            frequency_score = np.mean(frequency_scores)
-            
-            # 3. Structural complexity (entity degree diversity)
-            degree_scores = []
-            for triple in snap:
-                s, r, o = triple
-                s_degree = len(self.entity_degree.get(s, set()))
-                o_degree = len(self.entity_degree.get(o, set()))
-                degree_scores.append((s_degree + o_degree) / 2.0)
-            
-            degree_score = np.mean(degree_scores) if degree_scores else 0
-            # Normalize degree score
-            max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
-            degree_score = degree_score / max(max_degree, 1)
-            
-            # 4. Snapshot size complexity (larger snapshots = potentially harder)
-            size_score = len(snap) / max(len(s) for s in self.train_list)
-            
-            # Combine all difficulty metrics with adaptive weights
-            # Higher weight on frequency for skewed datasets, temporal for regular datasets
-            freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
-            temporal_weight = 0.8 - freq_weight
-            
-            combined_score = (
-                temporal_weight * temporal_score +
-                freq_weight * frequency_score +
-                0.15 * degree_score +
-                0.05 * size_score
-            )
-            
-            difficulty_scores.append(combined_score)
-        
         return np.array(difficulty_scores)
 
-def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
+def get_curriculum_samples(train_list, difficulty_scores, current_ratio, strategy='easy_first'):
     """
-    Get training samples using a general curriculum strategy.
-    Balances temporal order with difficulty for optimal learning progression.
+    Get training samples based on curriculum learning strategy.
+    
+    Args:
+        train_list: List of training snapshots
+        difficulty_scores: Difficulty score for each snapshot
+        current_ratio: Current ratio of data to include
+        strategy: 'easy_first', 'hard_first', or 'mixed'
     """
-    n_samples = max(1, min(int(len(train_list) * current_ratio), len(train_list)))
+    n_samples = int(len(train_list) * current_ratio)
+    n_samples = max(1, min(n_samples, len(train_list)))
     
-    # Combine temporal order with difficulty-based selection
-    # This works well for both ICEWS (temporal patterns) and GDELT (frequency skew)
+    if strategy == 'easy_first':
+        # Sort by difficulty (ascending - easiest first)
+        sorted_indices = np.argsort(difficulty_scores)
+        selected_indices = sorted_indices[:n_samples]
+    elif strategy == 'hard_first':
+        # Sort by difficulty (descending - hardest first)
+        sorted_indices = np.argsort(difficulty_scores)[::-1]
+        selected_indices = sorted_indices[:n_samples]
+    elif strategy == 'mixed':
+        # Mix of easy and hard samples
+        sorted_indices = np.argsort(difficulty_scores)
+        easy_count = n_samples // 2
+        hard_count = n_samples - easy_count
+        easy_indices = sorted_indices[:easy_count]
+        hard_indices = sorted_indices[-hard_count:]
+        selected_indices = np.concatenate([easy_indices, hard_indices])
+    else:
+        # Random sampling (baseline)
+        selected_indices = np.random.choice(len(train_list), n_samples, replace=False)
     
-    # Create temporal preference (earlier samples preferred)
-    temporal_preference = np.arange(len(train_list)) / len(train_list)
-    
-    # Combine temporal and difficulty scores
-    # Early in curriculum: prefer easy + early samples
-    # Later in curriculum: include harder + later samples
-    temporal_weight = max(0.3, 1.0 - current_ratio)  # Decrease temporal weight as curriculum progresses
-    difficulty_weight = 1.0 - temporal_weight
-    
-    combined_scores = (
-        temporal_weight * temporal_preference +
-        difficulty_weight * difficulty_scores
-    )
-    
-    # Select samples with combined scoring
-    selected_indices = np.argsort(combined_scores)[:n_samples]
-    
-    # Ensure we always include some early temporal samples for context
-    min_temporal_samples = max(1, min(n_samples // 4, 5))
-    early_samples = list(range(1, min(min_temporal_samples + 1, len(train_list))))
-    
-    # Combine and deduplicate
-    selected_indices = sorted(list(set(selected_indices) | set(early_samples)))
-    
-    return selected_indices[:n_samples]  # Ensure we don't exceed target sample count
+    return sorted(selected_indices)
 
 def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_list, all_ans_r_list, model_name, static_graph, mode):
     """
@@ -411,15 +349,209 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
             writer.writerow(row.values())
             
     return all_mrr_raw, all_mrr_filter
+
+class AdaptiveCurriculumScheduler:
+    """
+    Adaptive Curriculum Learning scheduler that adjusts curriculum based on model performance.
+    """
     
+    def __init__(self, strategy='cosine', difficulty_metric='frequency', 
+                 start_ratio=0.2, end_ratio=1.0, warmup_epochs=5,
+                 adaptation_strategy='loss_based', 
+                 patience=3, adaptation_threshold=0.01,
+                 acceleration_factor=1.5, deceleration_factor=0.7):
+        """
+        Args:
+            strategy: Base scheduling strategy ('linear', 'exponential', 'step', 'cosine')
+            difficulty_metric: Difficulty metric to use
+            start_ratio: Initial fraction of training data to use
+            end_ratio: Final fraction of training data to use
+            warmup_epochs: Number of epochs to reach full curriculum
+            adaptation_strategy: 'performance_based', 'loss_based', or 'gradient_based'
+            patience: Number of epochs to wait before adapting
+            adaptation_threshold: Minimum improvement threshold for adaptation
+            acceleration_factor: Factor to speed up curriculum when performance is good
+            deceleration_factor: Factor to slow down curriculum when performance is poor
+        """
+        self.strategy = strategy
+        self.difficulty_metric = difficulty_metric
+        self.start_ratio = start_ratio
+        self.end_ratio = end_ratio
+        self.warmup_epochs = warmup_epochs
+        self.adaptation_strategy = adaptation_strategy
+        self.patience = patience
+        self.adaptation_threshold = adaptation_threshold
+        self.acceleration_factor = acceleration_factor
+        self.deceleration_factor = deceleration_factor
+        
+        # Adaptive state tracking
+        self.performance_history = []
+        self.loss_history = []
+        self.gradient_norm_history = []
+        self.current_progress_rate = 1.0  # Rate at which curriculum progresses
+        self.stagnation_count = 0
+        self.last_adaptation_epoch = 0
+        
+    def update_performance_metrics(self, epoch, mrr_score=None, loss=None, grad_norm=None):
+        """Update performance metrics for adaptive scheduling"""
+        if mrr_score is not None:
+            self.performance_history.append((epoch, mrr_score))
+        if loss is not None:
+            self.loss_history.append((epoch, loss))
+        if grad_norm is not None:
+            self.gradient_norm_history.append((epoch, grad_norm))
+    
+    def _should_adapt(self, epoch):
+        """Determine if curriculum should be adapted based on recent performance"""
+        if epoch - self.last_adaptation_epoch < self.patience:
+            return False, 0.0
+            
+        if self.adaptation_strategy == 'performance_based':
+            return self._performance_based_adaptation(epoch)
+        elif self.adaptation_strategy == 'loss_based':
+            return self._loss_based_adaptation(epoch)
+        elif self.adaptation_strategy == 'gradient_based':
+            return self._gradient_based_adaptation(epoch)
+        else:
+            return False, 0.0
+    
+    def _performance_based_adaptation(self, epoch):
+        """Adapt based on MRR performance improvement"""
+        if len(self.performance_history) < self.patience + 1:
+            return False, 0.0
+            
+        recent_scores = [score for _, score in self.performance_history[-self.patience:]]
+        older_scores = [score for _, score in self.performance_history[-2*self.patience:-self.patience]]
+        
+        if len(older_scores) == 0:
+            return False, 0.0
+            
+        recent_avg = np.mean(recent_scores)
+        older_avg = np.mean(older_scores)
+        improvement = recent_avg - older_avg
+        
+        if improvement > self.adaptation_threshold:
+            # Good performance - accelerate curriculum
+            return True, self.acceleration_factor
+        elif improvement < -self.adaptation_threshold:
+            # Poor performance - decelerate curriculum
+            return True, self.deceleration_factor
+        else:
+            # Stagnation - maintain current pace
+            self.stagnation_count += 1
+            return False, 0.0
+    
+    def _loss_based_adaptation(self, epoch):
+        """Adapt based on loss improvement"""
+        if len(self.loss_history) < self.patience + 1:
+            return False, 0.0
+            
+        recent_losses = [loss for _, loss in self.loss_history[-self.patience:]]
+        older_losses = [loss for _, loss in self.loss_history[-2*self.patience:-self.patience]]
+        
+        if len(older_losses) == 0:
+            return False, 0.0
+            
+        recent_avg = np.mean(recent_losses)
+        older_avg = np.mean(older_losses)
+        improvement = older_avg - recent_avg  # Loss decrease is improvement
+        
+        if improvement > self.adaptation_threshold:
+            return True, self.acceleration_factor
+        elif improvement < -self.adaptation_threshold:
+            return True, self.deceleration_factor
+        else:
+            return False, 0.0
+    
+    def _gradient_based_adaptation(self, epoch):
+        """Adapt based on gradient norm stability"""
+        if len(self.gradient_norm_history) < self.patience + 1:
+            return False, 0.0
+            
+        recent_norms = [norm for _, norm in self.gradient_norm_history[-self.patience:]]
+        gradient_variance = np.var(recent_norms)
+        
+        # Low variance indicates stable training - can accelerate
+        # High variance indicates unstable training - should decelerate
+        if gradient_variance < 0.1:  # Stable gradients
+            return True, self.acceleration_factor
+        elif gradient_variance > 1.0:  # Unstable gradients
+            return True, self.deceleration_factor
+        else:
+            return False, 0.0
+    
+    def get_current_ratio(self, epoch, total_epochs):
+        """Calculate current curriculum ratio with adaptive adjustment"""
+        if epoch >= self.warmup_epochs:
+            return self.end_ratio
+        
+        # Check if adaptation is needed
+        should_adapt, adaptation_factor = self._should_adapt(epoch)
+        
+        if should_adapt:
+            self.current_progress_rate *= adaptation_factor
+            self.last_adaptation_epoch = epoch
+            # Clamp progress rate to reasonable bounds
+            self.current_progress_rate = max(0.1, min(3.0, self.current_progress_rate))
+            print(f"Epoch {epoch}: Adapting curriculum progress rate to {self.current_progress_rate:.3f}")
+        
+        # Calculate base progress with adaptive rate
+        adaptive_progress = min(1.0, (epoch / self.warmup_epochs) * self.current_progress_rate)
+        
+        # Apply base scheduling strategy
+        if self.strategy == 'linear':
+            ratio = self.start_ratio + (self.end_ratio - self.start_ratio) * adaptive_progress
+        elif self.strategy == 'exponential':
+            ratio = self.start_ratio * ((self.end_ratio / self.start_ratio) ** adaptive_progress)
+        elif self.strategy == 'step':
+            if adaptive_progress < 0.33:
+                ratio = self.start_ratio
+            elif adaptive_progress < 0.66:
+                ratio = (self.start_ratio + self.end_ratio) / 2
+            else:
+                ratio = self.end_ratio
+        elif self.strategy == 'cosine':
+            ratio = self.start_ratio + (self.end_ratio - self.start_ratio) * \
+                   (1 - np.cos(adaptive_progress * np.pi)) / 2
+        else:
+            ratio = self.end_ratio
+            
+        return min(ratio, self.end_ratio)
+    
+    def get_adaptation_info(self):
+        """Return current adaptation state information"""
+        return {
+            'progress_rate': self.current_progress_rate,
+            'stagnation_count': self.stagnation_count,
+            'last_adaptation_epoch': self.last_adaptation_epoch,
+            'performance_history_length': len(self.performance_history),
+            'recent_performance_trend': self._get_recent_trend()
+        }
+    
+    def _get_recent_trend(self):
+        """Get recent performance trend"""
+        if len(self.performance_history) < 2:
+            return "insufficient_data"
+        
+        recent_scores = [score for _, score in self.performance_history[-min(5, len(self.performance_history)):]]
+        if len(recent_scores) >= 2:
+            trend = np.polyfit(range(len(recent_scores)), recent_scores, 1)[0]
+            if trend > 0.001:
+                return "improving"
+            elif trend < -0.001:
+                return "declining"
+            else:
+                return "stable"
+        return "stable"
+
 
 def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=None):
     global mrr_raw, mrr_filter
     mrr_raw, mrr_filter = [], []
     """
-    General curriculum learning experiment that adapts to any temporal KG dataset.
+    Modified run_experiment with adaptive curriculum learning.
     """
-    # load configuration for grid search the best configuration
+    # Load configuration for grid search
     if n_hidden:
         args.n_hidden = n_hidden
     if n_layers:
@@ -429,7 +561,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     if n_bases:
         args.n_bases = n_bases
 
-    # load graph data
+    # Load graph data
     print("loading graph data")
     data = utils.load_data(args.dataset)
     train_list = utils.split_by_time(data.train)
@@ -439,28 +571,31 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_nodes = data.num_nodes
     num_rels = data.num_rels
 
-    # Initialize general curriculum learning components
-    use_curriculum = getattr(args, 'use_curriculum', False)
+    # Initialize ADAPTIVE curriculum learning components
+    adaptive_scheduler = AdaptiveCurriculumScheduler(
+        strategy=getattr(args, 'curriculum_strategy', 'linear'),
+        difficulty_metric=getattr(args, 'difficulty_metric', 'degree'),
+        start_ratio=getattr(args, 'curriculum_start_ratio', 0.1),
+        end_ratio=getattr(args, 'curriculum_end_ratio', 1.0),
+        warmup_epochs=getattr(args, 'curriculum_warmup_epochs', 10),
+        adaptation_strategy=getattr(args, 'adaptation_strategy', 'loss_based'),
+        patience=getattr(args, 'adaptation_patience', 3),
+        adaptation_threshold=getattr(args, 'adaptation_threshold', 0.01),
+        acceleration_factor=getattr(args, 'acceleration_factor', 1.5),
+        deceleration_factor=getattr(args, 'deceleration_factor', 0.7)
+    )
     
-    if use_curriculum:
-        curriculum_scheduler = GeneralCurriculumScheduler(
-            total_epochs=args.n_epochs,
-            warmup_ratio=getattr(args, 'curriculum_warmup_ratio', 0.3),
-            strategy=getattr(args, 'curriculum_strategy', 'adaptive')
-        )
-        
-        difficulty_analyzer = GeneralDifficultyAnalyzer(train_list)
-        difficulty_scores = difficulty_analyzer.compute_difficulty_scores()
-        
-        print(f"Curriculum Learning Enabled:")
-        print(f"  Strategy: {curriculum_scheduler.strategy}")
-        print(f"  Warmup Epochs: {curriculum_scheduler.warmup_epochs}")
-        print(f"  Start Ratio: {curriculum_scheduler.start_ratio}")
-        print(f"  Data Statistics:")
-        print(f"    Entity freq std/mean: {difficulty_analyzer.entity_freq_std:.2f}/{difficulty_analyzer.entity_freq_mean:.2f}")
-        print(f"    Relation freq std/mean: {difficulty_analyzer.relation_freq_std:.2f}/{difficulty_analyzer.relation_freq_mean:.2f}")
-    else:
-        print("Curriculum Learning Disabled - Using standard training")
+    difficulty_analyzer = DifficultyAnalyzer(train_list, num_nodes, num_rels)
+    difficulty_scores = difficulty_analyzer.compute_difficulty_scores(
+        adaptive_scheduler.difficulty_metric
+    )
+    
+    print(f"Adaptive Curriculum Learning Settings:")
+    print(f"  Base Strategy: {adaptive_scheduler.strategy}")
+    print(f"  Difficulty Metric: {adaptive_scheduler.difficulty_metric}")
+    print(f"  Adaptation Strategy: {adaptive_scheduler.adaptation_strategy}")
+    print(f"  Start Ratio: {adaptive_scheduler.start_ratio}")
+    print(f"  Adaptation Patience: {adaptive_scheduler.patience}")
 
     # Load answer lists for evaluation
     all_ans_list_test = utils.load_all_answers_for_time_filter(data.test, num_rels, num_nodes, False)
@@ -468,15 +603,15 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     all_ans_list_valid = utils.load_all_answers_for_time_filter(data.valid, num_rels, num_nodes, False)
     all_ans_list_r_valid = utils.load_all_answers_for_time_filter(data.valid, num_rels, num_nodes, True)
     
-    model_name = "{}-len{}-gpu{}-lr{}-{}-{}-{}-{}-{}-{}-{}"\
-        .format(args.dataset, args.train_history_len, args.gpu, args.lr, args.temperature, args.pre_weight, 
-                args.use_cl, args.pre_type, args.n_hidden, args.encoder, str(time.time()))
-    model_state_file = '../models/' + 'esh' 
+    model_name = "{}-adaptive-len{}-gpu{}-lr{}-{}-{}-{}-{}-{}-{}-{}"\
+        .format(args.dataset, args.train_history_len, args.gpu, args.lr, args.temperature,
+                args.pre_weight, args.use_cl, args.pre_type, args.n_hidden, args.encoder, str(time.time()))
+    model_state_file = '../models/' + 'esh_adaptive'
+    
     print("Sanity Check: stat name : {}".format(model_state_file))
-    print("Sanity Check: Is cuda available ? {}".format(torch.cuda.is_available()))
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
 
-    # Static graph setup (if applicable)
+    # Static graph setup (same as before)
     if args.add_static_graph:
         static_triples = np.array(_read_triplets_as_list("../data/" + args.dataset + "/e-w-graph.txt", {}, {}, load_time=False))
         num_static_rels = len(np.unique(static_triples[:, 1]))
@@ -487,102 +622,65 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     else:
         num_static_rels, num_words, static_triples, static_graph = 0, 0, [], None
 
-    # Create model
-    model = RecurrentRGCN(args.decoder,
-                          args.encoder,
-                        num_nodes,
-                        num_rels,
-                        num_static_rels,
-                        num_words,
-                        args.n_hidden,
-                        args.opn,
-                        sequence_len=args.train_history_len,
-                        num_bases=args.n_bases,
-                        num_basis=args.n_basis,
-                        num_hidden_layers=args.n_layers,
-                        dropout=args.dropout,
-                        self_loop=args.self_loop,
-                        skip_connect=args.skip_connect,
-                        layer_norm=args.layer_norm,
-                        input_dropout=args.input_dropout,
-                        hidden_dropout=args.hidden_dropout,
-                        feat_dropout=args.feat_dropout,
-                        aggregation=args.aggregation,
-                        weight=args.weight,
-                        pre_weight=args.pre_weight,
-                        discount=args.discount,
-                        angle=args.angle,
-                        use_static=args.add_static_graph,
-                        pre_type=args.pre_type,
-                        use_cl=args.use_cl,
-                        temperature=args.temperature,
-                        entity_prediction=args.entity_prediction,
-                        relation_prediction=args.relation_prediction,
-                        use_cuda=use_cuda,
-                        gpu=args.gpu,
-                        analysis=args.run_analysis,
-                        cl_approach = args.cl_approach)
+    # Create model (same as before)
+    model = RecurrentRGCN(args.decoder, args.encoder, num_nodes, num_rels, num_static_rels, num_words,
+                          args.n_hidden, args.opn, sequence_len=args.train_history_len,
+                          num_bases=args.n_bases, num_basis=args.n_basis, num_hidden_layers=args.n_layers,
+                          dropout=args.dropout, self_loop=args.self_loop, skip_connect=args.skip_connect,
+                          layer_norm=args.layer_norm, input_dropout=args.input_dropout,
+                          hidden_dropout=args.hidden_dropout, feat_dropout=args.feat_dropout,
+                          aggregation=args.aggregation, weight=args.weight, pre_weight=args.pre_weight,
+                          discount=args.discount, angle=args.angle, use_static=args.add_static_graph,
+                          pre_type=args.pre_type, use_cl=args.use_cl, temperature=args.temperature,
+                          entity_prediction=args.entity_prediction, relation_prediction=args.relation_prediction,
+                          use_cuda=use_cuda, gpu=args.gpu, analysis=args.run_analysis, cl_approach = args.cl_approach)
+
     if use_cuda:
         torch.cuda.set_device(args.gpu)
         model.cuda()
 
-    print(f"Model created with curriculum learning approach: {args.cl_approach}")
+    print(f"  loss method:",args.cl_approach)
 
     if args.add_static_graph:
         static_graph = build_sub_graph(len(static_node_id), num_static_rels, static_triples, use_cuda, args.gpu)
 
-    # optimizer
+    # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
 
     if args.test and os.path.exists(model_state_file):
-        mrr_raw, mrr_filter = test(model,
-                                train_list+valid_list, 
-                                test_list, 
-                                num_rels, 
-                                num_nodes, 
-                                use_cuda, 
-                                all_ans_list_test, 
-                                all_ans_list_r_test, 
-                                model_state_file, 
-                                static_graph, 
-                                "test")
-    elif args.test and not os.path.exists(model_state_file):
-        print("--------------{} not exist, Change mode to train and generate stat for testing----------------\n".format(model_state_file))
+        mrr_raw, mrr_filter = test(model, train_list+valid_list, test_list, num_rels, num_nodes, 
+                                   use_cuda, all_ans_list_test, all_ans_list_r_test, model_state_file, 
+                                   static_graph, "test")
     else:
-        print("----------------------------------------start training----------------------------------------\n")
-        if use_curriculum:
-            print("Using general curriculum learning")
-        
+        print("-------------- Start training with ADAPTIVE curriculum learning --------------\n")
         best_mrr = 0
-        patience_counter = 0
-        patience_limit = 5
+        his_best = 0
         avgloss = []
-        
-        # Training loop
+        # Training loop with ADAPTIVE curriculum learning
         for epoch in range(args.n_epochs):
             model.train()
             losses = []
             losses_e = []
             losses_r = []
             losses_static = []
+            epoch_grad_norms = []
 
-            # Get current curriculum samples
-            if use_curriculum:
-                current_ratio = curriculum_scheduler.get_current_ratio(epoch)
-                selected_indices = get_curriculum_samples(
-                    train_list, 
-                    difficulty_scores, 
-                    current_ratio
-                )
-                print(f"Epoch {epoch}: Using {len(selected_indices)}/{len(train_list)} samples (ratio: {current_ratio:.3f})")
-            else:
-                # Use all samples without curriculum
-                selected_indices = list(range(1, len(train_list)))  # Skip index 0
-                current_ratio = 1.0
-
-            # Shuffle selected indices to avoid order bias within curriculum
-            if use_curriculum and epoch > 0:
-                random.shuffle(selected_indices)
+            # Get ADAPTIVE curriculum ratio and samples
+            current_ratio = adaptive_scheduler.get_current_ratio(epoch, args.n_epochs)
+            selected_indices = get_curriculum_samples(
+                train_list, 
+                difficulty_scores, 
+                current_ratio,
+                strategy=getattr(args, 'curriculum_sample_strategy', 'mixed')
+            )
+            
+            # Get adaptation info for logging
+            adaptation_info = adaptive_scheduler.get_adaptation_info()
+            
+            print(f"Epoch {epoch}: Using {len(selected_indices)}/{len(train_list)} samples")
+            print(f"  Curriculum ratio: {current_ratio:.3f}")
+            print(f"  Progress rate: {adaptation_info['progress_rate']:.3f}")
+            print(f"  Performance trend: {adaptation_info['recent_performance_trend']}")
 
             for train_sample_num in tqdm(selected_indices):
                 if train_sample_num == 0: 
@@ -592,25 +690,11 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                 if train_sample_num - args.train_history_len < 0:
                     input_list = train_list[0: train_sample_num]
                 else:
-                    input_list = train_list[train_sample_num - args.train_history_len:
-                                        train_sample_num]
+                    input_list = train_list[train_sample_num - args.train_history_len: train_sample_num]
 
-                # Load subgraph data with fallback
-                try:
-                    subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
-                    subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
-                except FileNotFoundError:
-                    # Fallback: create subgraph from available history
-                    if len(input_list) > 0:
-                        # Use recent history for subgraph construction
-                        history_window = min(3, len(input_list))
-                        subgraph_arr = np.concatenate(input_list[-history_window:])
-                        subgraph_arr_inv = subgraph_arr[:, [2, 1, 0]]
-                        subgraph_arr_inv[:, 1] = subgraph_arr_inv[:, 1] + num_rels
-                    else:
-                        # Skip this sample if no history available
-                        continue
-                
+                # Load subgraph data
+                subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
+                subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
                 subg_snap = build_graph(num_nodes, num_rels, subgraph_arr, use_cuda, args.gpu)
                 subg_snap_inv = build_graph(num_nodes, num_rels, subgraph_arr_inv, use_cuda, args.gpu)
 
@@ -619,162 +703,77 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                 que_pair = e2r(output[0], num_rels)
                 que_pair_inv = e2r(inverse_triples, num_rels)
                 
-                # Generate history graph
                 history_glist = [build_sub_graph(num_nodes, num_rels, snap, use_cuda, args.gpu) for snap in input_list]
-                triples = torch.from_numpy(output[0]).long().cuda() if use_cuda else torch.from_numpy(output[0]).long()
-                inverse_triples_tensor = torch.from_numpy(inverse_triples).long().cuda() if use_cuda else torch.from_numpy(inverse_triples).long()
+                triples = torch.from_numpy(output[0]).long().cuda()
+                inverse_triples = torch.from_numpy(inverse_triples).long().cuda() 
                 
-                # Forward and backward pass for both directions
-                for direction in range(2): 
-                    try:
-                        if direction % 2 == 0: 
-                            loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair, subg_snap, train_sample_num, history_glist, triples, static_graph, use_cuda)
-                        else:
-                            loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair_inv, subg_snap_inv, train_sample_num, history_glist, inverse_triples_tensor, static_graph, use_cuda)
+                for id in range(2): 
+                    if id % 2 == 0: 
+                        loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair, subg_snap, train_sample_num, 
+                                                                             history_glist, triples, static_graph, use_cuda)
+                    else:
+                        loss_e, loss_r, loss_static, loss_cl = model.get_loss(que_pair_inv, subg_snap_inv, train_sample_num, 
+                                                                             history_glist, inverse_triples, static_graph, use_cuda)
 
-                        loss = loss_e + loss_static + loss_cl
-                    
-                        losses.append(loss.item())
-                        losses_e.append(loss_e.item())
-                        losses_r.append(loss_r.item())
-                        losses_static.append(loss_static.item())
-                        
-                        loss.backward()
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)
-                        optimizer.step()
-                        optimizer.zero_grad()
-                    except RuntimeError as e:
-                        # Handle potential GPU memory issues gracefully
-                        print(f"Warning: Skipping sample {train_sample_num} due to error: {e}")
-                        if use_cuda:
-                            torch.cuda.empty_cache()
-                        continue
-                    
-            # Record average loss
-            avg_loss = np.mean(losses) if losses else 0.0
-            avgloss.append(avg_loss)
-            
-            # Print epoch statistics
-            if use_curriculum:
-                curriculum_info = f"| Curriculum Ratio: {current_ratio:.3f}"
-                # Show curriculum progress
-                if epoch < curriculum_scheduler.warmup_epochs:
-                    progress_pct = (epoch / curriculum_scheduler.warmup_epochs) * 100
-                    curriculum_info += f" | Curriculum Progress: {progress_pct:.1f}%"
-            else:
-                curriculum_info = ""
+                    loss = loss_e + loss_static + loss_cl
                 
-            print("Epoch {:04d} | Ave Loss: {:.4f} | entity-relation-static:{:.4f}-{:.4f}-{:.4f} {} | Best MRR {:.4f}"
-                  .format(epoch, avg_loss, 
-                         np.mean(losses_e) if losses_e else 0.0, 
-                         np.mean(losses_r) if losses_r else 0.0, 
-                         np.mean(losses_static) if losses_static else 0.0, 
-                         curriculum_info, best_mrr))
+                    losses.append(loss.item())
+                    losses_e.append(loss_e.item())
+                    losses_r.append(loss_r.item())
+                    losses_static.append(loss_static.item())
+                    
+                    loss.backward()
+                    
+                    # Calculate gradient norm for adaptive scheduling
+                    total_grad_norm = 0
+                    for param in model.parameters():
+                        if param.grad is not None:
+                            total_grad_norm += param.grad.data.norm(2).item() ** 2
+                    total_grad_norm = total_grad_norm ** 0.5
+                    epoch_grad_norms.append(total_grad_norm)
+                    
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_norm)
+                    optimizer.step()
+                    optimizer.zero_grad()
+            avgloss.append(np.mean(losses))
+            # Update adaptive scheduler with performance metrics
+            avg_loss = np.mean(losses)
+            avg_grad_norm = np.mean(epoch_grad_norms) if epoch_grad_norms else 0.0
+            adaptive_scheduler.update_performance_metrics(epoch, loss=avg_loss, grad_norm=avg_grad_norm)
 
-            # Validation
+            print("Epoch {:04d} | Ave Loss: {:.4f} | entity-relation-static:{:.4f}-{:.4f}-{:.4f} | Adaptive Ratio: {:.3f} | Best MRR {:.4f}"
+                  .format(epoch, avg_loss, np.mean(losses_e), np.mean(losses_r), np.mean(losses_static), current_ratio, best_mrr))
+
+            # Validation with adaptive scheduler update
             if epoch and epoch % args.evaluate_every == 0:
-                mrr_raw, mrr_filter = test(model, 
-                                    train_list, 
-                                    valid_list, 
-                                    num_rels, 
-                                    num_nodes, 
-                                    use_cuda, 
-                                    all_ans_list_valid, 
-                                    all_ans_list_r_valid, 
-                                    model_state_file, 
-                                    static_graph, 
-                                    mode="train")
+                mrr_raw, mrr_filter = test(model, train_list, valid_list, num_rels, num_nodes, use_cuda, 
+                                          all_ans_list_valid, all_ans_list_r_valid, model_state_file, static_graph, mode="train")
                 
-                # Early stopping with patience
+                # Update adaptive scheduler with MRR performance
+                adaptive_scheduler.update_performance_metrics(epoch, mrr_score=mrr_filter.item())
+                
                 if not args.relation_evaluation:
                     if mrr_filter < best_mrr:
-                        patience_counter += 1
-                        print(f"No improvement. Patience: {patience_counter}/{patience_limit}")
-                        if patience_counter >= patience_limit:
-                            print(f"Early stopping triggered after {patience_limit} epochs without improvement")
+                        his_best += 1
+                        if epoch >= args.n_epochs or his_best >= 5:
                             break
                     else:
-                        patience_counter = 0
+                        his_best = 0
                         best_mrr = mrr_filter
                         torch.save({'state_dict': model.state_dict(), 'epoch': epoch}, model_state_file)
-                        print(f"New best MRR: {best_mrr:.4f} - Model saved")
                         
-            # Clear GPU cache to prevent memory issues
-            if use_cuda:
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
         np.savetxt('lossval.txt', avgloss)
         plt.title('Plot of training loss')
         plt.plot(avgloss)
-        plt.savefig('lossfig.png')
-        # # Save loss plot
-        # if avgloss:
-        #     np.savetxt('lossval.txt', avgloss)
-        #     plt.figure(figsize=(12, 8))
-            
-        #     # Create subplot for loss and curriculum progression
-        #     if use_curriculum:
-        #         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-                
-        #         # Loss plot
-        #         ax1.plot(avgloss, 'b-', linewidth=2)
-        #         ax1.set_title(f'Training Loss - {args.dataset.upper()} with General Curriculum Learning')
-        #         ax1.set_xlabel('Epoch')
-        #         ax1.set_ylabel('Loss')
-        #         ax1.grid(True, alpha=0.3)
-                
-        #         # Curriculum progression plot
-        #         curriculum_ratios = [curriculum_scheduler.get_current_ratio(e) for e in range(len(avgloss))]
-        #         ax2.plot(curriculum_ratios, 'r-', linewidth=2)
-        #         ax2.axvline(x=curriculum_scheduler.warmup_epochs, color='gray', linestyle='--', alpha=0.7, label='Curriculum Complete')
-        #         ax2.set_title('Curriculum Learning Progression')
-        #         ax2.set_xlabel('Epoch')
-        #         ax2.set_ylabel('Data Ratio Used')
-        #         ax2.set_ylim(0, 1.1)
-        #         ax2.grid(True, alpha=0.3)
-        #         ax2.legend()
-                
-        #         plt.tight_layout()
-        #     else:
-        #         plt.plot(avgloss, 'b-', linewidth=2)
-        #         plt.title(f'Training Loss - {args.dataset.upper()}')
-        #         plt.xlabel('Epoch')
-        #         plt.ylabel('Loss')
-        #         plt.grid(True, alpha=0.3)
-            
-        #     plt.savefig('lossfig.png', dpi=300, bbox_inches='tight')
-        #     plt.close()
-
+        plt.savefig('lossfig.png')    
         # Final testing
-        print("\n" + "="*60)
-        print("Starting final evaluation on test set...")
-        if use_curriculum:
-            print(f"Curriculum learning completed after {curriculum_scheduler.warmup_epochs} warmup epochs")
-            print(f"Final strategy used: {curriculum_scheduler.strategy}")
-        print("="*60)
-        
-        mrr_raw, mrr_filter = test(model, 
-                            train_list+valid_list,
-                            test_list, 
-                            num_rels, 
-                            num_nodes, 
-                            use_cuda, 
-                            all_ans_list_test, 
-                            all_ans_list_r_test, 
-                            model_state_file, 
-                            static_graph, 
-                            mode="test")
-                            
-        print("="*60)
-        print("Training completed successfully!")
-        if use_curriculum:
-            print(f"Curriculum learning provided structured learning progression")
-            print(f"Dataset characteristics automatically detected and handled")
-        print("="*60)
-        
+        mrr_raw, mrr_filter = test(model, train_list+valid_list, test_list, num_rels, num_nodes, use_cuda, 
+                                  all_ans_list_test, all_ans_list_r_test, model_state_file, static_graph, mode="test")
     return mrr_raw, mrr_filter
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='kgta')
+    parser = argparse.ArgumentParser(description='LogCL')
 
     parser.add_argument("--gpu", type=int, default=0,
                         help="gpu")
@@ -840,8 +839,7 @@ if __name__ == '__main__':
     # parser.add_argument("--curriculum_sample_strategy", type=str, default="easy_first",  # 'easy_first', 'hard_first', 'mixed'
     #                     help="curriculum strategy")
 
-    
-    parser.add_argument("--cl_approach", type=str, default="original", 
+    parser.add_argument("--cl_approach", type=str, default="laplace", 
                         choices=["original", "cosine_positive", "barlow_twins", "mse_positive", "temporal_consistency","laplace"],
                         help="positive pairs only approach")
  
@@ -898,3 +896,6 @@ if __name__ == '__main__':
     args.__dict__["test_history_len"] = args.__dict__["train_history_len"]
 
     run_experiment(args)
+
+
+
