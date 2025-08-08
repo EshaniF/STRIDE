@@ -127,7 +127,7 @@ class GeneralCurriculumScheduler:
         self.total_epochs = total_epochs
         self.warmup_epochs = int(total_epochs * warmup_ratio)
         self.strategy = strategy
-        self.start_ratio = 0.2  # Start with 20% of data
+        self.start_ratio = 0.4  # Start with 20% of data
         
     def get_current_ratio(self, epoch):
         """Calculate current curriculum ratio based on epoch and strategy"""
@@ -440,12 +440,12 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_rels = data.num_rels
 
     # Initialize general curriculum learning components
-    use_curriculum = getattr(args, 'use_curriculum', False)
+    use_curriculum = getattr(args, 'use_curriculum', True)
     
     if use_curriculum:
         curriculum_scheduler = GeneralCurriculumScheduler(
             total_epochs=args.n_epochs,
-            warmup_ratio=getattr(args, 'curriculum_warmup_ratio', 0.3),
+            warmup_ratio=getattr(args, 'curriculum_warmup_ratio', 0.4),
             strategy=getattr(args, 'curriculum_strategy', 'adaptive')
         )
         
@@ -459,8 +459,10 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
         print(f"  Data Statistics:")
         print(f"    Entity freq std/mean: {difficulty_analyzer.entity_freq_std:.2f}/{difficulty_analyzer.entity_freq_mean:.2f}")
         print(f"    Relation freq std/mean: {difficulty_analyzer.relation_freq_std:.2f}/{difficulty_analyzer.relation_freq_mean:.2f}")
+        print(f" use contrastive ? : ", args.use_cl)
     else:
         print("Curriculum Learning Disabled - Using standard training")
+        print(f" use contrastive ? : ", args.use_cl)
 
     # Load answer lists for evaluation
     all_ans_list_test = utils.load_all_answers_for_time_filter(data.test, num_rels, num_nodes, False)
