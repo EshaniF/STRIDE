@@ -645,7 +645,7 @@ def get_data_with_t(data, tim):
     return np.array(triples)
 
 # dataset_list = ["ICEWS14", "ICEWS18","ICEWS05-15"]
-dataset_list = ["ICEWS14"]
+dataset_list = ["GDELT"]
 for dataset in dataset_list:
     train_data, train_times = load_quadruples('data/{}'.format(dataset), 'train.txt')
     num_nodes,num_rels= get_total_number('data/{}'.format(dataset), 'stat.txt')
@@ -658,12 +658,12 @@ for dataset in dataset_list:
     # save_dir_subg = '../{}/his_graph_for/'.format(dataset)
     # save_dir_obj = '../{}/his_graph_inv/'.format(dataset)
     # save_dir_sub = '../{}/his_dict/'.format(dataset)
-    # save_dir_subg = 'data/{}/his_graph_for/'.format(dataset)
-    # save_dir_obj = 'data/{}/his_graph_inv/'.format(dataset)
-    # save_dir_sub = 'data/{}/his_dict/'.format(dataset)
-    save_dir_subg = 'data/{}/his_graph_for_new/'.format(dataset)
-    save_dir_obj = 'data/{}/his_graph_inv_new/'.format(dataset)
-    save_dir_sub = 'data/{}/his_dict_new/'.format(dataset)
+    save_dir_subg = 'data/{}/his_graph_for/'.format(dataset)
+    save_dir_obj = 'data/{}/his_graph_inv/'.format(dataset)
+    save_dir_sub = 'data/{}/his_dict/'.format(dataset)
+    # save_dir_subg = 'data/{}/his_graph_for_new/'.format(dataset)
+    # save_dir_obj = 'data/{}/his_graph_inv_new/'.format(dataset)
+    # save_dir_sub = 'data/{}/his_dict_new/'.format(dataset)
 
     def mkdirs(path):
         if not os.path.exists(path):
@@ -700,13 +700,13 @@ for dataset in dataset_list:
         #.npy files are binary files to store numpy arrays.
         # np.save('../{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
         # np.save('../{}/his_graph_inv/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
-        # np.save('data/{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
-        # np.save('data/{}/his_graph_inv/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
-        np.save('data/{}/his_graph_for_new/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
-        np.save('data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
+        np.save('data/{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
+        np.save('data/{}/his_graph_inv/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
+        # np.save('data/{}/his_graph_for_new/train_s_r_{}.npy'.format(dataset, train_sample_num), sub_snap)
+        # np.save('data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(dataset, train_sample_num), sub_snap_inv)
     # np.save('../{}/his_dict/train_s_r.npy'.format(dataset), sr_to_sro)
-    # np.save('data/{}/his_dict/train_s_r.npy'.format(dataset), sr_to_sro)
-    np.save('data/{}/his_dict_new/train_s_r.npy'.format(dataset), sr_to_sro)
+    np.save('data/{}/his_dict/train_s_r.npy'.format(dataset), sr_to_sro)
+    # np.save('data/{}/his_dict_new/train_s_r.npy'.format(dataset), sr_to_sro)
     print('sum of snap lengths ',sum(snaplen))
     # arr = np.load('./{}/his_graph_for/train_s_r_{}.npy'.format(dataset, train_sample_num))
     # print(arr)

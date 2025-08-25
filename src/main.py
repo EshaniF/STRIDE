@@ -127,7 +127,7 @@ class GeneralCurriculumScheduler:
         self.total_epochs = total_epochs
         self.warmup_epochs = int(total_epochs * warmup_ratio)
         self.strategy = strategy
-        self.start_ratio = 0.4  # Start with 20% of data
+        self.start_ratio = 0.2  # Start with 20% of data
         
     def get_current_ratio(self, epoch):
         """Calculate current curriculum ratio based on epoch and strategy"""
@@ -330,7 +330,8 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
 
     his_list = history_list[:]
     subg_arr = np.concatenate(his_list)
-    sr_to_sro = np.load('../data/{}/his_dict_new/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
+    # sr_to_sro = np.load('../data/{}/his_dict_new/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
+    sr_to_sro = np.load('../data/{}/his_dict/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
 
     
     for time_idx, test_snap in enumerate(tqdm(test_list)):
@@ -599,8 +600,10 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
 
                 # Load subgraph data with fallback
                 try:
-                    subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
-                    subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
+                    # subgraph_arr = np.load('../data/{}/his_graph_for_new/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
+                    subgraph_arr = np.load('../data/{}/his_graph_for/train_s_r_{}.npy'.format(args.dataset, train_sample_num))
+                    # subgraph_arr_inv = np.load('../data/{}/his_graph_inv_new/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
+                    subgraph_arr_inv = np.load('../data/{}/his_graph_inv/train_o_r_{}.npy'.format(args.dataset, train_sample_num))
                 except FileNotFoundError:
                     # Fallback: create subgraph from available history
                     if len(input_list) > 0:
@@ -651,7 +654,8 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                         if use_cuda:
                             torch.cuda.empty_cache()
                         continue
-                    
+                if use_cuda:
+                    torch.cuda.empty_cache()    
             # Record average loss
             avg_loss = np.mean(losses) if losses else 0.0
             avgloss.append(avg_loss)
@@ -672,7 +676,8 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                          np.mean(losses_r) if losses_r else 0.0, 
                          np.mean(losses_static) if losses_static else 0.0, 
                          curriculum_info, best_mrr))
-
+            if use_cuda:
+                torch.cuda.empty_cache()
             # Validation
             if epoch and epoch % args.evaluate_every == 0:
                 mrr_raw, mrr_filter = test(model, 
