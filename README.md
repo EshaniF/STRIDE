@@ -27,6 +27,11 @@ python main.py -d ICEWS14 --train-history-len 3 --test-history-len 3 --dilate-le
 
 python main.py -d ICEWS18 --train-history-len 7 --test-history-len 7 --dilate-len 1 --lr 0.001 --n-layers 2 --evaluate-every 1 --gpu=0 --n-hidden 200 --self-loop --decoder convtranse --encoder uvrgcn --layer-norm --weight 0.5  --entity-prediction --angle 10 --discount 1 --pre-weight 0.9  --pre-type all --add-static-graph  --temperature 0.05 --run-statistic --n-epochs 70 --evaluate-every 1 --use-cl --cl_approach laplace
 
+
+
+curriculum
+python main.py -d ICEWS18 --train-history-len 7 --test-history-len 7 --dilate-len 1 --lr 0.001 --n-layers 2 --evaluate-every 1 --gpu=0 --n-hidden 200 --self-loop --decoder convtranse --encoder uvrgcn --layer-norm --weight 0.5  --entity-prediction --angle 10 --discount 1 --pre-weight 0.9  --pre-type all --add-static-graph  --temperature 0.05 --run-statistic --n-epochs 70 --evaluate-every 1 --use-cl --cl_approach laplace
+
 ```
 
 
