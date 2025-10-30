@@ -157,9 +157,20 @@ class GeneralDifficultyAnalyzer:
     Combines multiple difficulty metrics to handle various data characteristics.
     """
     
-    def __init__(self, train_list):
+    def __init__(self, train_list, ablation_mode='all'):
+        """
+        Args:
+            train_list: List of training snapshots
+            ablation_mode: Which components to include
+                - 'all': All 4 components (default)
+                - 'first_3': Temporal, frequency, and degree (exclude size)
+                - 'first_2': Temporal and frequency only (exclude degree and size)
+                - 'first_1': Temporal only (exclude frequency, degree, and size)
+                - 'none': Uniform difficulty (baseline)
+        """
         self.train_list = train_list
         self.all_triples = np.concatenate(train_list) if train_list else np.array([])
+        self.ablation_mode = ablation_mode
         self._compute_statistics()
         
     def _compute_statistics(self):
@@ -196,7 +207,7 @@ class GeneralDifficultyAnalyzer:
     def compute_difficulty_scores(self):
         """
         Compute difficulty scores using multiple metrics.
-        Combines temporal, frequency, and structural complexity.
+        Combines temporal, frequency, and structural complexity based on ablation mode.
         """
         difficulty_scores = []
         
@@ -205,55 +216,196 @@ class GeneralDifficultyAnalyzer:
                 difficulty_scores.append(0.5)  # Neutral difficulty for empty snapshots
                 continue
             
+            # Baseline: uniform difficulty
+            if self.ablation_mode == 'none':
+                difficulty_scores.append(0.5)
+                continue
+            
             # 1. Temporal difficulty (later = more complex due to accumulated history)
             temporal_score = t / len(self.train_list)
             
             # 2. Frequency-based difficulty (rare entities/relations = harder)
-            frequency_scores = []
-            for triple in snap:
-                s, r, o = triple
-                s_freq = self.entity_freq.get(s, 1)
-                o_freq = self.entity_freq.get(o, 1)
-                r_freq = self.relation_freq.get(r, 1)
+            frequency_score = 0.0
+            if self.ablation_mode in ['all', 'first_3', 'first_2']:
+                frequency_scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    s_freq = self.entity_freq.get(s, 1)
+                    o_freq = self.entity_freq.get(o, 1)
+                    r_freq = self.relation_freq.get(r, 1)
+                    
+                    # Inverse frequency score (lower frequency = higher difficulty)
+                    entity_rarity = 2.0 / (s_freq + o_freq)
+                    relation_rarity = 1.0 / r_freq
+                    frequency_scores.append(entity_rarity + relation_rarity * 0.5)
                 
-                # Inverse frequency score (lower frequency = higher difficulty)
-                entity_rarity = 2.0 / (s_freq + o_freq)
-                relation_rarity = 1.0 / r_freq
-                frequency_scores.append(entity_rarity + relation_rarity * 0.5)
-            
-            frequency_score = np.mean(frequency_scores)
+                frequency_score = np.mean(frequency_scores)
             
             # 3. Structural complexity (entity degree diversity)
-            degree_scores = []
-            for triple in snap:
-                s, r, o = triple
-                s_degree = len(self.entity_degree.get(s, set()))
-                o_degree = len(self.entity_degree.get(o, set()))
-                degree_scores.append((s_degree + o_degree) / 2.0)
-            
-            degree_score = np.mean(degree_scores) if degree_scores else 0
-            # Normalize degree score
-            max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
-            degree_score = degree_score / max(max_degree, 1)
+            degree_score = 0.0
+            if self.ablation_mode in ['all', 'first_3']:
+                degree_scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    s_degree = len(self.entity_degree.get(s, set()))
+                    o_degree = len(self.entity_degree.get(o, set()))
+                    degree_scores.append((s_degree + o_degree) / 2.0)
+                
+                degree_score = np.mean(degree_scores) if degree_scores else 0
+                # Normalize degree score
+                max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
+                degree_score = degree_score / max(max_degree, 1)
             
             # 4. Snapshot size complexity (larger snapshots = potentially harder)
-            size_score = len(snap) / max(len(s) for s in self.train_list)
+            size_score = 0.0
+            if self.ablation_mode == 'all':
+                size_score = len(snap) / max(len(s) for s in self.train_list)
             
-            # Combine all difficulty metrics with adaptive weights
-            # Higher weight on frequency for skewed datasets, temporal for regular datasets
-            freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
-            temporal_weight = 0.8 - freq_weight
-            
-            combined_score = (
-                temporal_weight * temporal_score +
-                freq_weight * frequency_score +
-                0.15 * degree_score +
-                0.05 * size_score
-            )
+            # Combine difficulty metrics with adaptive weights based on ablation mode
+            if self.ablation_mode == 'first_1':
+                # Only temporal
+                combined_score = temporal_score
+                
+            elif self.ablation_mode == 'first_2':
+                # Temporal + Frequency
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 1.0 - freq_weight
+                
+                combined_score = (
+                    temporal_weight * temporal_score +
+                    freq_weight * frequency_score
+                )
+                
+            elif self.ablation_mode == 'first_3':
+                # Temporal + Frequency + Degree
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 0.85 - freq_weight
+                
+                combined_score = (
+                    temporal_weight * temporal_score +
+                    freq_weight * frequency_score +
+                    0.15 * degree_score
+                )
+                
+            else:  # 'all'
+                # All 4 components
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 0.8 - freq_weight
+                
+                combined_score = (
+                    temporal_weight * temporal_score +
+                    freq_weight * frequency_score +
+                    0.15 * degree_score +
+                    0.05 * size_score
+                )
             
             difficulty_scores.append(combined_score)
         
         return np.array(difficulty_scores)
+
+# class GeneralDifficultyAnalyzer:
+#     """
+#     General difficulty analyzer that works for any temporal knowledge graph dataset.
+#     Combines multiple difficulty metrics to handle various data characteristics.
+#     """
+    
+#     def __init__(self, train_list):
+#         self.train_list = train_list
+#         self.all_triples = np.concatenate(train_list) if train_list else np.array([])
+#         self._compute_statistics()
+        
+#     def _compute_statistics(self):
+#         """Compute comprehensive statistics for difficulty assessment"""
+#         if len(self.all_triples) == 0:
+#             self.entity_freq = defaultdict(int)
+#             self.relation_freq = defaultdict(int)
+#             self.entity_degree = defaultdict(set)
+#             return
+            
+#         # Entity and relation frequencies
+#         self.entity_freq = defaultdict(int)
+#         self.relation_freq = defaultdict(int)
+#         self.entity_degree = defaultdict(set)
+        
+#         for triple in self.all_triples:
+#             s, r, o = triple
+#             self.entity_freq[s] += 1
+#             self.entity_freq[o] += 1
+#             self.relation_freq[r] += 1
+#             # Track entity degrees (number of unique relations)
+#             self.entity_degree[s].add(r)
+#             self.entity_degree[o].add(r)
+        
+#         # Compute distribution statistics for adaptive difficulty
+#         entity_freqs = list(self.entity_freq.values())
+#         self.entity_freq_std = np.std(entity_freqs) if entity_freqs else 0
+#         self.entity_freq_mean = np.mean(entity_freqs) if entity_freqs else 0
+        
+#         relation_freqs = list(self.relation_freq.values())
+#         self.relation_freq_std = np.std(relation_freqs) if relation_freqs else 0
+#         self.relation_freq_mean = np.mean(relation_freqs) if relation_freqs else 0
+        
+#     def compute_difficulty_scores(self):
+#         """
+#         Compute difficulty scores using multiple metrics.
+#         Combines temporal, frequency, and structural complexity.
+#         """
+#         difficulty_scores = []
+        
+#         for t, snap in enumerate(self.train_list):
+#             if len(snap) == 0:
+#                 difficulty_scores.append(0.5)  # Neutral difficulty for empty snapshots
+#                 continue
+            
+#             # 1. Temporal difficulty (later = more complex due to accumulated history)
+#             temporal_score = t / len(self.train_list)
+            
+#             # 2. Frequency-based difficulty (rare entities/relations = harder)
+#             frequency_scores = []
+#             for triple in snap:
+#                 s, r, o = triple
+#                 s_freq = self.entity_freq.get(s, 1)
+#                 o_freq = self.entity_freq.get(o, 1)
+#                 r_freq = self.relation_freq.get(r, 1)
+                
+#                 # Inverse frequency score (lower frequency = higher difficulty)
+#                 entity_rarity = 2.0 / (s_freq + o_freq)
+#                 relation_rarity = 1.0 / r_freq
+#                 frequency_scores.append(entity_rarity + relation_rarity * 0.5)
+            
+#             frequency_score = np.mean(frequency_scores)
+            
+#             # 3. Structural complexity (entity degree diversity)
+#             degree_scores = []
+#             for triple in snap:
+#                 s, r, o = triple
+#                 s_degree = len(self.entity_degree.get(s, set()))
+#                 o_degree = len(self.entity_degree.get(o, set()))
+#                 degree_scores.append((s_degree + o_degree) / 2.0)
+            
+#             degree_score = np.mean(degree_scores) if degree_scores else 0
+#             # Normalize degree score
+#             max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
+#             degree_score = degree_score / max(max_degree, 1)
+            
+#             # 4. Snapshot size complexity (larger snapshots = potentially harder)
+#             size_score = len(snap) / max(len(s) for s in self.train_list)
+            
+#             # Combine all difficulty metrics with adaptive weights
+#             # Higher weight on frequency for skewed datasets, temporal for regular datasets
+#             freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+#             temporal_weight = 0.8 - freq_weight
+            
+#             combined_score = (
+#                 temporal_weight * temporal_score +
+#                 freq_weight * frequency_score +
+#                 0.15 * degree_score +
+#                 0.05 * size_score
+#             )
+            
+#             difficulty_scores.append(combined_score)
+        
+#         return np.array(difficulty_scores)
 
 def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
     """
@@ -450,7 +602,8 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
             strategy=getattr(args, 'curriculum_strategy', 'adaptive')
         )
         
-        difficulty_analyzer = GeneralDifficultyAnalyzer(train_list)
+        # difficulty_analyzer = GeneralDifficultyAnalyzer(train_list)
+        difficulty_analyzer = GeneralDifficultyAnalyzer(train_list, ablation_mode='first_3')
         difficulty_scores = difficulty_analyzer.compute_difficulty_scores()
         
         print(f"Curriculum Learning Enabled:")
