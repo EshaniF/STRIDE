@@ -603,7 +603,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
         )
         
         # difficulty_analyzer = GeneralDifficultyAnalyzer(train_list)
-        difficulty_analyzer = GeneralDifficultyAnalyzer(train_list, ablation_mode='first_3')
+        difficulty_analyzer = GeneralDifficultyAnalyzer(train_list, ablation_mode='all')
         difficulty_scores = difficulty_analyzer.compute_difficulty_scores()
         
         print(f"Curriculum Learning Enabled:")
