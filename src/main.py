@@ -23,506 +23,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
-from diagnose import diagnose_difficulty_computation
 
 
-###################################
-def compute_test_difficulty_scores(train_list, test_list, num_rels):
-    """
-    Compute difficulty scores specifically for TEST snapshots
-    based on what the model sees at test time
-    """
-    print("\n" + "="*80)
-    print("Computing Difficulty Scores for TEST Set")
-    print("="*80)
-    
-    from collections import defaultdict
-    
-    # First, gather statistics from ALL available data (train)
-    all_train_triples = np.concatenate(train_list) if train_list else np.array([])
-    
-    entity_freq = defaultdict(int)
-    relation_freq = defaultdict(int)
-    sr_pairs = defaultdict(set)
-    entity_relations = defaultdict(set)
-    
-    for triple in all_train_triples:
-        s, r, o = triple
-        entity_freq[s] += 1
-        entity_freq[o] += 1
-        relation_freq[r] += 1
-        sr_pairs[(s, r)].add(o)
-        entity_relations[s].add(r)
-        entity_relations[o].add(r)
-    
-    # Now compute difficulty for each TEST snapshot
-    test_difficulty_scores = []
-    
-    print(f"\nAnalyzing {len(test_list)} test snapshots...")
-    
-    for t, test_snap in enumerate(test_list):
-        if len(test_snap) == 0:
-            test_difficulty_scores.append(0.5)
-            continue
-        
-        # === Component 1: Answer Ambiguity ===
-        # How many possible answers exist for queries in this test snapshot?
-        ambiguity_scores = []
-        for triple in test_snap:
-            s, r, o = triple
-            num_possible = len(sr_pairs.get((s, r), set()))
-            ambiguity = min(num_possible / 10.0, 1.0)
-            ambiguity_scores.append(ambiguity)
-        
-        ambiguity_score = np.mean(ambiguity_scores) if ambiguity_scores else 0.5
-        
-        # === Component 2: Entity Rarity ===
-        # Are the entities in this snapshot rare (seen infrequently in training)?
-        rarity_scores = []
-        for triple in test_snap:
-            s, r, o = triple
-            s_freq = entity_freq.get(s, 0)  # 0 if never seen in training!
-            o_freq = entity_freq.get(o, 0)
-            
-            # Unseen entities = maximum difficulty
-            if s_freq == 0 or o_freq == 0:
-                rarity = 1.0
-            else:
-                max_freq = max(entity_freq.values())
-                s_rarity = 1.0 - (s_freq / max_freq)
-                o_rarity = 1.0 - (o_freq / max_freq)
-                rarity = (s_rarity + o_rarity) / 2.0
-            
-            rarity_scores.append(rarity)
-        
-        rarity_score = np.mean(rarity_scores) if rarity_scores else 0.5
-        
-        # === Component 3: Relation Selectivity ===
-        selectivity_scores = []
-        for triple in test_snap:
-            s, r, o = triple
-            r_freq = relation_freq.get(r, 0)
-            
-            if r_freq == 0:
-                selectivity = 1.0
-            else:
-                max_rel_freq = max(relation_freq.values())
-                selectivity = r_freq / max_rel_freq
-            
-            selectivity_scores.append(selectivity)
-        
-        selectivity_score = np.mean(selectivity_scores) if selectivity_scores else 0.5
-        
-        # === Component 4: Novel Entities ===
-        # What percentage of entities in test were NEVER seen in training?
-        test_entities = set()
-        for triple in test_snap:
-            test_entities.add(triple[0])
-            test_entities.add(triple[2])
-        
-        train_entities = set(entity_freq.keys())
-        novel_entities = test_entities - train_entities
-        novelty_score = len(novel_entities) / len(test_entities) if test_entities else 0.0
-        
-        # === Component 5: Temporal Distance ===
-        # Later test snapshots are potentially harder (further from training)
-        temporal_score = t / max(len(test_list) - 1, 1)
-        
-        # === Combine Components ===
-        combined_score = (
-            0.30 * ambiguity_score +      # Answer ambiguity
-            0.25 * rarity_score +          # Entity rarity
-            0.15 * selectivity_score +     # Relation selectivity
-            0.20 * novelty_score +         # Novel entities
-            0.10 * temporal_score          # Temporal progression
-        )
-        
-        test_difficulty_scores.append(combined_score)
-        
-        # Print details for first few snapshots
-        if t < 3:
-            print(f"\nTest Snapshot {t}:")
-            print(f"  Triples: {len(test_snap)}")
-            print(f"  Novel entities: {len(novel_entities)}/{len(test_entities)} ({novelty_score:.1%})")
-            print(f"  Ambiguity: {ambiguity_score:.3f}")
-            print(f"  Rarity: {rarity_score:.3f}")
-            print(f"  Combined difficulty: {combined_score:.3f}")
-    
-    test_difficulty_scores = np.array(test_difficulty_scores)
-    
-    # Normalize to [0, 1] range
-    score_min = test_difficulty_scores.min()
-    score_max = test_difficulty_scores.max()
-    score_range = score_max - score_min
-    
-    if score_range > 1e-6:
-        test_difficulty_scores = (test_difficulty_scores - score_min) / score_range
-    
-    print(f"\nTest Difficulty Statistics:")
-    print(f"  Range: [{test_difficulty_scores.min():.3f}, {test_difficulty_scores.max():.3f}]")
-    print(f"  Mean: {test_difficulty_scores.mean():.3f}")
-    print(f"  Std: {test_difficulty_scores.std():.3f}")
-    
-    return test_difficulty_scores
 
-
-def analyze_test_difficulty_vs_performance(test_list, test_difficulty_scores, 
-                                          test_mrr, test_h1, test_h10):
-    """
-    Properly analyze difficulty vs performance for TEST set
-    """
-    print("\n" + "="*80)
-    print("DIFFICULTY VS PERFORMANCE ANALYSIS (TEST SET)")
-    print("="*80)
-    
-    # Verify alignment
-    n_test = len(test_list)
-    n_diff = len(test_difficulty_scores)
-    n_perf = len(test_mrr)
-    
-    print(f"\nData Alignment Check:")
-    print(f"  Test snapshots: {n_test}")
-    print(f"  Difficulty scores: {n_diff}")
-    print(f"  Performance metrics: {n_perf}")
-    
-    if not (n_test == n_diff == n_perf):
-        print(f"\n⚠️  WARNING: Misalignment detected!")
-        min_len = min(n_test, n_diff, n_perf)
-        print(f"  Using first {min_len} snapshots for analysis")
-        test_difficulty_scores = test_difficulty_scores[:min_len]
-        test_mrr = test_mrr[:min_len]
-        test_h1 = test_h1[:min_len]
-        test_h10 = test_h10[:min_len]
-    
-    # Calculate correlations
-    corr_mrr, p_mrr = pearsonr(test_difficulty_scores, test_mrr)
-    corr_h1, p_h1 = pearsonr(test_difficulty_scores, test_h1)
-    corr_h10, p_h10 = pearsonr(test_difficulty_scores, test_h10)
-    
-    print(f"\nCorrelation Analysis:")
-    print(f"  Difficulty vs MRR:     {corr_mrr:+.3f} (p={p_mrr:.4f})")
-    print(f"  Difficulty vs Hits@1:  {corr_h1:+.3f} (p={p_h1:.4f})")
-    print(f"  Difficulty vs Hits@10: {corr_h10:+.3f} (p={p_h10:.4f})")
-    
-    if abs(corr_mrr) > 0.3:
-        print(f"\n✓ Good correlation! Difficulty scores are meaningful.")
-    elif abs(corr_mrr) > 0.15:
-        print(f"\n~ Moderate correlation. Difficulty captures some signal.")
-    else:
-        print(f"\n✗ Weak correlation. Difficulty may not be well-calibrated.")
-    
-    # Create visualization
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    
-    # Row 1: Scatter plots
-    axes[0, 0].scatter(test_difficulty_scores, test_mrr, alpha=0.6, s=80)
-    axes[0, 0].set_xlabel('Difficulty Score')
-    axes[0, 0].set_ylabel('MRR')
-    axes[0, 0].set_title(f'Difficulty vs MRR (corr={corr_mrr:+.3f})')
-    axes[0, 0].grid(True, alpha=0.3)
-    
-    # Add trend line
-    z = np.polyfit(test_difficulty_scores, test_mrr, 1)
-    p = np.poly1d(z)
-    axes[0, 0].plot(test_difficulty_scores, p(test_difficulty_scores), "r--", alpha=0.8, linewidth=2)
-    
-    axes[0, 1].scatter(test_difficulty_scores, test_h1, alpha=0.6, s=80, c='orange')
-    axes[0, 1].set_xlabel('Difficulty Score')
-    axes[0, 1].set_ylabel('Hits@1')
-    axes[0, 1].set_title(f'Difficulty vs Hits@1 (corr={corr_h1:+.3f})')
-    axes[0, 1].grid(True, alpha=0.3)
-    
-    axes[0, 2].scatter(test_difficulty_scores, test_h10, alpha=0.6, s=80, c='green')
-    axes[0, 2].set_xlabel('Difficulty Score')
-    axes[0, 2].set_ylabel('Hits@10')
-    axes[0, 2].set_title(f'Difficulty vs Hits@10 (corr={corr_h10:+.3f})')
-    axes[0, 2].grid(True, alpha=0.3)
-    
-    # Row 2: Time series
-    snapshot_indices = np.arange(len(test_difficulty_scores))
-    
-    ax_diff = axes[1, 0]
-    ax_diff.plot(snapshot_indices, test_difficulty_scores, 'b-o', linewidth=2, markersize=6)
-    ax_diff.set_xlabel('Test Snapshot Index')
-    ax_diff.set_ylabel('Difficulty Score')
-    ax_diff.set_title('Difficulty Over Test Snapshots')
-    ax_diff.grid(True, alpha=0.3)
-    
-    ax_mrr = axes[1, 1]
-    ax_mrr.plot(snapshot_indices, test_mrr, 'r-o', linewidth=2, markersize=6)
-    ax_mrr.set_xlabel('Test Snapshot Index')
-    ax_mrr.set_ylabel('MRR')
-    ax_mrr.set_title('MRR Over Test Snapshots')
-    ax_mrr.grid(True, alpha=0.3)
-    
-    ax_both = axes[1, 2]
-    ax1 = ax_both
-    ax1.plot(snapshot_indices, test_difficulty_scores, 'b-o', linewidth=2, markersize=6, label='Difficulty')
-    ax1.set_xlabel('Test Snapshot Index')
-    ax1.set_ylabel('Difficulty', color='b')
-    ax1.tick_params(axis='y', labelcolor='b')
-    
-    ax2 = ax1.twinx()
-    ax2.plot(snapshot_indices, test_mrr, 'r-s', linewidth=2, markersize=6, label='MRR')
-    ax2.set_ylabel('MRR', color='r')
-    ax2.tick_params(axis='y', labelcolor='r')
-    ax1.set_title('Difficulty and MRR Over Time')
-    ax1.grid(True, alpha=0.3)
-    
-    # Add legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='best')
-    
-    plt.tight_layout()
-    plt.savefig('test_difficulty_vs_performance.png', dpi=150, bbox_inches='tight')
-    
-    print(f"\n{'='*80}")
-    print(f"Analysis saved to 'test_difficulty_vs_performance.png'")
-    print(f"{'='*80}")
-    
-    return corr_mrr, corr_h1, corr_h10
-# class PerformanceTracker:
-#     """
-#     Tracks performance metrics per snapshot for difficulty analysis
-#     """
-#     def __init__(self, num_snapshots):
-#         self.num_snapshots = num_snapshots
-#         self.snapshot_metrics = defaultdict(lambda: {
-#             'mrr': [],
-#             'hits@1': [],
-#             'hits@3': [],
-#             'hits@10': [],
-#             'count': 0
-#         })
-        
-#     def update(self, snapshot_idx, mrr, hits_at_k):
-#         """Update metrics for a specific snapshot"""
-#         self.snapshot_metrics[snapshot_idx]['mrr'].append(mrr)
-#         self.snapshot_metrics[snapshot_idx]['hits@1'].append(hits_at_k[0])
-#         self.snapshot_metrics[snapshot_idx]['hits@3'].append(hits_at_k[1])
-#         self.snapshot_metrics[snapshot_idx]['hits@10'].append(hits_at_k[2])
-#         self.snapshot_metrics[snapshot_idx]['count'] += 1
-    
-#     def get_average_metrics(self):
-#         """Get average metrics per snapshot"""
-#         avg_metrics = {}
-#         for idx in range(self.num_snapshots):
-#             if idx in self.snapshot_metrics and self.snapshot_metrics[idx]['count'] > 0:
-#                 avg_metrics[idx] = {
-#                     'mrr': np.mean(self.snapshot_metrics[idx]['mrr']),
-#                     'hits@1': np.mean(self.snapshot_metrics[idx]['hits@1']),
-#                     'hits@3': np.mean(self.snapshot_metrics[idx]['hits@3']),
-#                     'hits@10': np.mean(self.snapshot_metrics[idx]['hits@10'])
-#                 }
-#             else:
-#                 avg_metrics[idx] = {
-#                     'mrr': 0.0,
-#                     'hits@1': 0.0,
-#                     'hits@3': 0.0,
-#                     'hits@10': 0.0
-#                 }
-#         return avg_metrics
-
-
-# def plot_difficulty_vs_performance(difficulty_scores, performance_metrics, dataset_name, save_path='analysis_plots'):
-#     """
-#     Create comprehensive difficulty vs performance visualizations
-    
-#     Args:
-#         difficulty_scores: Array of difficulty scores per snapshot
-#         performance_metrics: Dict with snapshot_idx -> metrics
-#         dataset_name: Name of dataset for plot title
-#         save_path: Directory to save plots
-#     """
-#     os.makedirs(save_path, exist_ok=True)
-    
-#     # Extract data
-#     snapshots = sorted(performance_metrics.keys())
-#     difficulties = [difficulty_scores[i] for i in snapshots]
-#     mrrs = [performance_metrics[i]['mrr'] for i in snapshots]
-#     hits1 = [performance_metrics[i]['hits@1'] for i in snapshots]
-#     hits3 = [performance_metrics[i]['hits@3'] for i in snapshots]
-#     hits10 = [performance_metrics[i]['hits@10'] for i in snapshots]
-    
-#     # Create figure with multiple subplots
-#     fig = plt.figure(figsize=(20, 12))
-    
-#     # 1. Main scatter plot: Difficulty vs MRR
-#     ax1 = plt.subplot(2, 3, 1)
-#     scatter1 = ax1.scatter(difficulties, mrrs, c=snapshots, cmap='viridis', 
-#                           s=100, alpha=0.6, edgecolors='black')
-#     ax1.set_xlabel('Difficulty Score', fontsize=12, fontweight='bold')
-#     ax1.set_ylabel('MRR', fontsize=12, fontweight='bold')
-#     ax1.set_title(f'Difficulty vs MRR - {dataset_name}', fontsize=14, fontweight='bold')
-#     ax1.grid(True, alpha=0.3)
-    
-#     # Add trend line
-#     z = np.polyfit(difficulties, mrrs, 2)
-#     p = np.poly1d(z)
-#     x_trend = np.linspace(min(difficulties), max(difficulties), 100)
-#     ax1.plot(x_trend, p(x_trend), "r--", linewidth=2, label='Trend (2nd order)')
-#     ax1.legend()
-    
-#     # Add correlation coefficient
-#     corr = np.corrcoef(difficulties, mrrs)[0, 1]
-#     ax1.text(0.05, 0.95, f'Correlation: {corr:.3f}', 
-#              transform=ax1.transAxes, fontsize=11, 
-#              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-#     plt.colorbar(scatter1, ax=ax1, label='Snapshot Index')
-    
-#     # 2. Difficulty vs Hits@1
-#     ax2 = plt.subplot(2, 3, 2)
-#     scatter2 = ax2.scatter(difficulties, hits1, c=snapshots, cmap='plasma', 
-#                           s=100, alpha=0.6, edgecolors='black')
-#     ax2.set_xlabel('Difficulty Score', fontsize=12, fontweight='bold')
-#     ax2.set_ylabel('Hits@1', fontsize=12, fontweight='bold')
-#     ax2.set_title(f'Difficulty vs Hits@1 - {dataset_name}', fontsize=14, fontweight='bold')
-#     ax2.grid(True, alpha=0.3)
-    
-#     # Add trend line
-#     z = np.polyfit(difficulties, hits1, 2)
-#     p = np.poly1d(z)
-#     ax2.plot(x_trend, p(x_trend), "r--", linewidth=2, label='Trend')
-#     ax2.legend()
-    
-#     corr_h1 = np.corrcoef(difficulties, hits1)[0, 1]
-#     ax2.text(0.05, 0.95, f'Correlation: {corr_h1:.3f}', 
-#              transform=ax2.transAxes, fontsize=11, 
-#              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-#     plt.colorbar(scatter2, ax=ax2, label='Snapshot Index')
-    
-#     # 3. Difficulty vs Hits@10
-#     ax3 = plt.subplot(2, 3, 3)
-#     scatter3 = ax3.scatter(difficulties, hits10, c=snapshots, cmap='coolwarm', 
-#                           s=100, alpha=0.6, edgecolors='black')
-#     ax3.set_xlabel('Difficulty Score', fontsize=12, fontweight='bold')
-#     ax3.set_ylabel('Hits@10', fontsize=12, fontweight='bold')
-#     ax3.set_title(f'Difficulty vs Hits@10 - {dataset_name}', fontsize=14, fontweight='bold')
-#     ax3.grid(True, alpha=0.3)
-    
-#     # Add trend line
-#     z = np.polyfit(difficulties, hits10, 2)
-#     p = np.poly1d(z)
-#     ax3.plot(x_trend, p(x_trend), "r--", linewidth=2, label='Trend')
-#     ax3.legend()
-    
-#     corr_h10 = np.corrcoef(difficulties, hits10)[0, 1]
-#     ax3.text(0.05, 0.95, f'Correlation: {corr_h10:.3f}', 
-#              transform=ax3.transAxes, fontsize=11, 
-#              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-#     plt.colorbar(scatter3, ax=ax3, label='Snapshot Index')
-    
-#     # 4. Binned difficulty analysis
-#     ax4 = plt.subplot(2, 3, 4)
-    
-#     # Create difficulty bins
-#     n_bins = 5
-#     bin_edges = np.linspace(min(difficulties), max(difficulties), n_bins + 1)
-#     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    
-#     binned_mrr = []
-#     binned_mrr_std = []
-#     for i in range(n_bins):
-#         mask = (np.array(difficulties) >= bin_edges[i]) & (np.array(difficulties) < bin_edges[i+1])
-#         if np.sum(mask) > 0:
-#             binned_mrr.append(np.mean(np.array(mrrs)[mask]))
-#             binned_mrr_std.append(np.std(np.array(mrrs)[mask]))
-#         else:
-#             binned_mrr.append(0)
-#             binned_mrr_std.append(0)
-    
-#     ax4.bar(bin_centers, binned_mrr, width=(bin_edges[1]-bin_edges[0])*0.8, 
-#             alpha=0.7, color='steelblue', edgecolor='black', yerr=binned_mrr_std, capsize=5)
-#     ax4.set_xlabel('Difficulty Score (Binned)', fontsize=12, fontweight='bold')
-#     ax4.set_ylabel('Average MRR', fontsize=12, fontweight='bold')
-#     ax4.set_title('Performance by Difficulty Bins', fontsize=14, fontweight='bold')
-#     ax4.grid(True, alpha=0.3, axis='y')
-    
-#     # Add sample counts
-#     for i, center in enumerate(bin_centers):
-#         mask = (np.array(difficulties) >= bin_edges[i]) & (np.array(difficulties) < bin_edges[i+1])
-#         count = np.sum(mask)
-#         ax4.text(center, binned_mrr[i] + binned_mrr_std[i] + 0.01, f'n={count}', 
-#                 ha='center', fontsize=9)
-    
-#     # 5. Temporal progression with difficulty overlay
-#     ax5 = plt.subplot(2, 3, 5)
-    
-#     ax5_twin = ax5.twinx()
-#     line1 = ax5.plot(snapshots, mrrs, 'b-o', linewidth=2, markersize=6, label='MRR')
-#     line2 = ax5_twin.plot(snapshots, difficulties, 'r--s', linewidth=2, markersize=6, label='Difficulty')
-    
-#     ax5.set_xlabel('Snapshot Index', fontsize=12, fontweight='bold')
-#     ax5.set_ylabel('MRR', fontsize=12, fontweight='bold', color='b')
-#     ax5_twin.set_ylabel('Difficulty Score', fontsize=12, fontweight='bold', color='r')
-#     ax5.set_title('Temporal Evolution: MRR vs Difficulty', fontsize=14, fontweight='bold')
-#     ax5.tick_params(axis='y', labelcolor='b')
-#     ax5_twin.tick_params(axis='y', labelcolor='r')
-#     ax5.grid(True, alpha=0.3)
-    
-#     # Combined legend
-#     lines = line1 + line2
-#     labels = [l.get_label() for l in lines]
-#     ax5.legend(lines, labels, loc='best')
-    
-#     # 6. All metrics comparison
-#     ax6 = plt.subplot(2, 3, 6)
-    
-#     # Normalize difficulties for comparison
-#     norm_diff = (np.array(difficulties) - min(difficulties)) / (max(difficulties) - min(difficulties))
-    
-#     ax6.plot(snapshots, mrrs, 'b-o', label='MRR', linewidth=2, markersize=5)
-#     ax6.plot(snapshots, hits1, 'g-s', label='Hits@1', linewidth=2, markersize=5)
-#     ax6.plot(snapshots, hits10, 'orange', marker='^', label='Hits@10', linewidth=2, markersize=5)
-#     ax6.plot(snapshots, norm_diff, 'r--', label='Difficulty (norm)', linewidth=2, alpha=0.7)
-    
-#     ax6.set_xlabel('Snapshot Index', fontsize=12, fontweight='bold')
-#     ax6.set_ylabel('Score', fontsize=12, fontweight='bold')
-#     ax6.set_title('All Metrics vs Difficulty Over Time', fontsize=14, fontweight='bold')
-#     ax6.legend(loc='best')
-#     ax6.grid(True, alpha=0.3)
-    
-#     plt.tight_layout()
-#     plt.savefig(f'{save_path}/difficulty_vs_performance_{dataset_name}.png', dpi=300, bbox_inches='tight')
-#     plt.close()
-    
-#     # Save detailed statistics to CSV
-#     stats_data = []
-#     for i, snapshot in enumerate(snapshots):
-#         stats_data.append({
-#             'snapshot': snapshot,
-#             'difficulty': difficulties[i],
-#             'mrr': mrrs[i],
-#             'hits@1': hits1[i],
-#             'hits@3': hits3[i],
-#             'hits@10': hits10[i]
-#         })
-    
-#     stats_filename = f'{save_path}/difficulty_performance_stats_{dataset_name}.csv'
-#     with open(stats_filename, 'w', newline='') as f:
-#         fieldnames = ['snapshot', 'difficulty', 'mrr', 'hits@1', 'hits@3', 'hits@10']
-#         writer = csv.DictWriter(f, fieldnames=fieldnames)
-#         writer.writeheader()
-#         writer.writerows(stats_data)
-    
-#     print(f"\nDifficulty vs Performance Analysis:")
-#     print(f"  - Correlation (Difficulty vs MRR): {corr:.3f}")
-#     print(f"  - Correlation (Difficulty vs Hits@1): {corr_h1:.3f}")
-#     print(f"  - Correlation (Difficulty vs Hits@10): {corr_h10:.3f}")
-#     print(f"  - Plots saved to: {save_path}/difficulty_vs_performance_{dataset_name}.png")
-#     print(f"  - Statistics saved to: {stats_filename}")
-    
-#     return {
-#         'correlation_mrr': corr,
-#         'correlation_hits1': corr_h1,
-#         'correlation_hits10': corr_h10,
-#         'binned_performance': list(zip(bin_centers, binned_mrr, binned_mrr_std))
-#     }
-# ####################################
 def update_dict(subg_arr, s_to_sro, sr_to_sro,sro_to_fre, num_rels):
     # Update the query based on the input graph at each time 
     inverse_subg = subg_arr[:, [2, 1, 0]]
@@ -701,302 +204,273 @@ class GeneralDifficultyAnalyzer:
         relation_freqs = list(self.relation_freq.values())
         self.relation_freq_std = np.std(relation_freqs) if relation_freqs else 0
         self.relation_freq_mean = np.mean(relation_freqs) if relation_freqs else 0
-        
+
     def compute_difficulty_scores(self):
         """
-        Compute difficulty scores with enhanced variance and proper scaling.
-        Uses multiple strategies to ensure meaningful score distribution.
+        Compute difficulty scores using multiple metrics.
+        Ensures all scores are normalized to [0, 1] range.
         """
         difficulty_scores = []
         
-        # Strategy 1: Collect raw metrics for all snapshots first
-        snapshot_metrics = []
+        # Pre-compute normalization factors - collect SNAPSHOT-LEVEL averages
+        all_frequency_scores = []  # per-snapshot averages
+        all_degree_scores = []      # per-snapshot averages
+        all_size_scores = []        # per-snapshot sizes
         
+        # First pass: collect raw SNAPSHOT scores for normalization
         for t, snap in enumerate(self.train_list):
             if len(snap) == 0:
-                snapshot_metrics.append({
-                    'temporal': 0,
-                    'frequency': 0,
-                    'degree': 0,
-                    'size': 0,
-                    'entities': set(),
-                    'relations': set()
-                })
+                continue
+                
+            # Collect frequency scores (average per snapshot)
+            if self.ablation_mode in ['all', 'first_3', 'first_2']:
+                snap_freq_scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    s_freq = self.entity_freq.get(s, 1)
+                    o_freq = self.entity_freq.get(o, 1)
+                    r_freq = self.relation_freq.get(r, 1)
+                    
+                    entity_rarity = 2.0 / (s_freq + o_freq)
+                    relation_rarity = 1.0 / r_freq
+                    snap_freq_scores.append(entity_rarity + relation_rarity * 0.5)
+                
+                if snap_freq_scores:
+                    all_frequency_scores.append(np.mean(snap_freq_scores))
+            
+            # Collect degree scores (average per snapshot)
+            if self.ablation_mode in ['all', 'first_3']:
+                snap_degree_scores = []
+                for triple in snap:
+                    s, r, o = triple
+                    s_degree = len(self.entity_degree.get(s, set()))
+                    o_degree = len(self.entity_degree.get(o, set()))
+                    snap_degree_scores.append((s_degree + o_degree) / 2.0)
+                
+                if snap_degree_scores:
+                    all_degree_scores.append(np.mean(snap_degree_scores))
+            
+            # Collect size scores
+            if self.ablation_mode == 'all':
+                all_size_scores.append(len(snap))
+        
+        # Compute normalization parameters from SNAPSHOT-LEVEL scores
+        freq_min = min(all_frequency_scores) if all_frequency_scores else 0
+        freq_max = max(all_frequency_scores) if all_frequency_scores else 1
+        freq_range = max(freq_max - freq_min, 1e-8)  # Avoid division by zero
+        
+        degree_min = min(all_degree_scores) if all_degree_scores else 0
+        degree_max = max(all_degree_scores) if all_degree_scores else 1
+        degree_range = max(degree_max - degree_min, 1e-8)
+        
+        size_min = min(all_size_scores) if all_size_scores else 0
+        size_max = max(all_size_scores) if all_size_scores else 1
+        size_range = max(size_max - size_min, 1e-8)
+        
+        # Second pass: compute normalized difficulty scores
+        for t, snap in enumerate(self.train_list):
+            if len(snap) == 0:
+                difficulty_scores.append(0.5)
                 continue
             
-            # Temporal progression (0 to 1)
-            temporal_raw = t / max(len(self.train_list) - 1, 1)
-            
-            # Entity/relation rarity (inverse frequency with log scaling)
-            entity_rarities = []
-            relation_rarities = []
-            entities_in_snap = set()
-            relations_in_snap = set()
-            
-            for triple in snap:
-                s, r, o = triple
-                entities_in_snap.add(s)
-                entities_in_snap.add(o)
-                relations_in_snap.add(r)
-                
-                # Higher frequency = lower rarity score
-                s_freq = max(self.entity_freq.get(s, 1), 1)
-                o_freq = max(self.entity_freq.get(o, 1), 1)
-                r_freq = max(self.relation_freq.get(r, 1), 1)
-                
-                # Inverse frequency with log dampening
-                total_entities = len(self.entity_freq)
-                total_relations = len(self.relation_freq)
-                
-                entity_rarity = (1.0 / s_freq + 1.0 / o_freq) / 2.0
-                relation_rarity = 1.0 / r_freq
-                
-                entity_rarities.append(entity_rarity)
-                relation_rarities.append(relation_rarity)
-            
-            # Structural complexity (average entity degree)
-            degrees = []
-            for triple in snap:
-                s, r, o = triple
-                s_degree = len(self.entity_degree.get(s, set()))
-                o_degree = len(self.entity_degree.get(o, set()))
-                degrees.append((s_degree + o_degree) / 2.0)
-            
-            snapshot_metrics.append({
-                'temporal': temporal_raw,
-                'frequency': np.mean(entity_rarities) * 0.7 + np.mean(relation_rarities) * 0.3,
-                'degree': np.mean(degrees),
-                'size': len(snap),
-                'entities': entities_in_snap,
-                'relations': relations_in_snap,
-                'entity_diversity': len(entities_in_snap) / max(len(snap), 1),
-                'relation_diversity': len(relations_in_snap) / max(len(snap), 1)
-            })
-        
-        # Strategy 2: Normalize each metric using percentile-based approach
-        # This ensures better distribution than min-max
-        
-        temporal_scores = [m['temporal'] for m in snapshot_metrics]
-        frequency_scores = [m['frequency'] for m in snapshot_metrics]
-        degree_scores = [m['degree'] for m in snapshot_metrics]
-        size_scores = [m['size'] for m in snapshot_metrics]
-        
-        def percentile_normalize(scores):
-            """Normalize using rank-based percentiles for better distribution"""
-            if len(scores) <= 1:
-                return [0.5] * len(scores)
-            
-            # Convert to ranks
-            sorted_indices = np.argsort(scores)
-            ranks = np.empty_like(sorted_indices)
-            ranks[sorted_indices] = np.arange(len(scores))
-            
-            # Normalize ranks to [0, 1]
-            normalized = ranks / max(len(scores) - 1, 1)
-            return normalized
-        
-        # Apply percentile normalization
-        temporal_norm = np.array(temporal_scores)  # Already normalized
-        frequency_norm = percentile_normalize(frequency_scores)
-        degree_norm = percentile_normalize(degree_scores)
-        size_norm = percentile_normalize(size_scores)
-        
-        # Strategy 3: Add diversity-based difficulty
-        diversity_scores = []
-        for m in snapshot_metrics:
-            # Snapshots with more diverse entities/relations are harder
-            div_score = (m['entity_diversity'] + m['relation_diversity']) / 2.0
-            diversity_scores.append(div_score)
-        diversity_norm = percentile_normalize(diversity_scores)
-        
-        # Strategy 4: Combine with amplified weights based on ablation mode
-        for i in range(len(self.train_list)):
-            if len(self.train_list[i]) == 0:
-                difficulty_scores.append(0.0)
-                continue
-            
+            # Baseline: uniform difficulty
             if self.ablation_mode == 'none':
                 difficulty_scores.append(0.5)
                 continue
             
+            # 1. Temporal difficulty (already in [0, 1])
+            temporal_score = t / max(len(self.train_list) - 1, 1)
+            
+            # 2. Normalized frequency-based difficulty
+            frequency_score = 0.0
+            if self.ablation_mode in ['all', 'first_3', 'first_2']:
+                frequency_scores_snap = []
+                for triple in snap:
+                    s, r, o = triple
+                    s_freq = self.entity_freq.get(s, 1)
+                    o_freq = self.entity_freq.get(o, 1)
+                    r_freq = self.relation_freq.get(r, 1)
+                    
+                    entity_rarity = 2.0 / (s_freq + o_freq)
+                    relation_rarity = 1.0 / r_freq
+                    raw_score = entity_rarity + relation_rarity * 0.5
+                    
+                    # Normalize to [0, 1]
+                    normalized_score = (raw_score - freq_min) / freq_range
+                    frequency_scores_snap.append(normalized_score)
+                
+                frequency_score = np.mean(frequency_scores_snap)
+            
+            # 3. Normalized structural complexity (entity degree diversity)
+            degree_score = 0.0
+            if self.ablation_mode in ['all', 'first_3']:
+                degree_scores_snap = []
+                for triple in snap:
+                    s, r, o = triple
+                    s_degree = len(self.entity_degree.get(s, set()))
+                    o_degree = len(self.entity_degree.get(o, set()))
+                    raw_degree = (s_degree + o_degree) / 2.0
+                    
+                    # Normalize to [0, 1]
+                    normalized_degree = (raw_degree - degree_min) / degree_range
+                    degree_scores_snap.append(normalized_degree)
+                
+                degree_score = np.mean(degree_scores_snap) if degree_scores_snap else 0
+            
+            # 4. Normalized snapshot size complexity
+            size_score = 0.0
+            if self.ablation_mode == 'all':
+                size_score = (len(snap) - size_min) / size_range
+            
+            # Combine difficulty metrics with adaptive weights
             if self.ablation_mode == 'first_1':
-                # Only temporal
-                score = temporal_norm[i]
+                combined_score = temporal_score
                 
             elif self.ablation_mode == 'first_2':
-                # Temporal + Frequency with emphasis on variance
-                score = (
-                    0.5 * temporal_norm[i] +
-                    0.5 * frequency_norm[i]
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 1.0 - freq_weight
+                
+                combined_score = (
+                    temporal_weight * temporal_score +
+                    freq_weight * frequency_score
                 )
                 
             elif self.ablation_mode == 'first_3':
-                # Temporal + Frequency + Degree
-                score = (
-                    0.4 * temporal_norm[i] +
-                    0.35 * frequency_norm[i] +
-                    0.25 * degree_norm[i]
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 0.85 - freq_weight
+                
+                combined_score = (
+                    temporal_weight * temporal_score +
+                    freq_weight * frequency_score +
+                    0.15 * degree_score
                 )
                 
             else:  # 'all'
-                # All components with balanced weights
-                score = (
-                    0.3 * temporal_norm[i] +
-                    0.3 * frequency_norm[i] +
-                    0.2 * degree_norm[i] +
-                    0.1 * size_norm[i] +
-                    0.1 * diversity_norm[i]
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 0.8 - freq_weight
+                
+                combined_score = (
+                    temporal_weight * temporal_score +
+                    freq_weight * frequency_score +
+                    0.15 * degree_score +
+                    0.05 * size_score
                 )
             
-            difficulty_scores.append(score)
+            # Ensure final score is in [0, 1] (should be guaranteed by construction, but clip for safety)
+            combined_score = np.clip(combined_score, 0.0, 1.0)
+            difficulty_scores.append(combined_score)
         
-        difficulty_scores = np.array(difficulty_scores)
+        scores_array = np.array(difficulty_scores)
         
-        # Strategy 5: Apply non-linear transformation to enhance variance
-        # Use power transformation to spread out middle values
-        mean_score = difficulty_scores.mean()
+        # Final verification and normalization (optional, for extra safety)
+        if len(scores_array) > 0:
+            scores_min = scores_array.min()
+            scores_max = scores_array.max()
+            if scores_max > scores_min:
+                # Re-normalize to ensure full [0, 1] range utilization
+                scores_array = (scores_array - scores_min) / (scores_max - scores_min)
         
-        if mean_score > 0:
-            # Apply a gentle power transformation
-            # Values < 0.5 get pushed down, values > 0.5 get pushed up
-            power = 1.5  # Adjust this to control spread (higher = more spread)
-            
-            # Center around 0.5, apply power, then scale back
-            centered = difficulty_scores - 0.5
-            sign = np.sign(centered)
-            magnitude = np.abs(centered)
-            transformed = sign * (magnitude ** power)
-            difficulty_scores = transformed + 0.5
-            
-            # Ensure bounds [0, 1]
-            difficulty_scores = np.clip(difficulty_scores, 0, 1)
-        
-        # Strategy 6: Final min-max normalization to use full range
-        score_min = difficulty_scores.min()
-        score_max = difficulty_scores.max()
-        score_range = score_max - score_min
-        
-        if score_range > 1e-6:
-            difficulty_scores = (difficulty_scores - score_min) / score_range
-        else:
-            # If all scores are the same, use temporal order
-            difficulty_scores = temporal_norm
-        
-        # Diagnostic output
-        print(f"\nDifficulty Score Statistics:")
-        print(f"  Range: [{difficulty_scores.min():.4f}, {difficulty_scores.max():.4f}]")
-        print(f"  Mean: {difficulty_scores.mean():.4f}, Std: {difficulty_scores.std():.4f}")
-        print(f"  Quartiles: Q1={np.percentile(difficulty_scores, 25):.4f}, "
-            f"Q2={np.percentile(difficulty_scores, 50):.4f}, "
-            f"Q3={np.percentile(difficulty_scores, 75):.4f}")
-        print(f"  First 5: {difficulty_scores[:5]}")
-        print(f"  Last 5: {difficulty_scores[-5:]}")
-        
-        return np.array(difficulty_scores)
+        return scores_array
 
-# class GeneralDifficultyAnalyzer:
-#     """
-#     General difficulty analyzer that works for any temporal knowledge graph dataset.
-#     Combines multiple difficulty metrics to handle various data characteristics.
-#     """
-    
-#     def __init__(self, train_list):
-#         self.train_list = train_list
-#         self.all_triples = np.concatenate(train_list) if train_list else np.array([])
-#         self._compute_statistics()
+    # def compute_difficulty_scores(self):
+    #     """
+    #     Compute difficulty scores using multiple metrics.
+    #     Combines temporal, frequency, and structural complexity based on ablation mode.
+    #     """
+    #     difficulty_scores = []
         
-#     def _compute_statistics(self):
-#         """Compute comprehensive statistics for difficulty assessment"""
-#         if len(self.all_triples) == 0:
-#             self.entity_freq = defaultdict(int)
-#             self.relation_freq = defaultdict(int)
-#             self.entity_degree = defaultdict(set)
-#             return
+    #     for t, snap in enumerate(self.train_list):
+    #         if len(snap) == 0:
+    #             difficulty_scores.append(0.5)  # Neutral difficulty for empty snapshots
+    #             continue
             
-#         # Entity and relation frequencies
-#         self.entity_freq = defaultdict(int)
-#         self.relation_freq = defaultdict(int)
-#         self.entity_degree = defaultdict(set)
-        
-#         for triple in self.all_triples:
-#             s, r, o = triple
-#             self.entity_freq[s] += 1
-#             self.entity_freq[o] += 1
-#             self.relation_freq[r] += 1
-#             # Track entity degrees (number of unique relations)
-#             self.entity_degree[s].add(r)
-#             self.entity_degree[o].add(r)
-        
-#         # Compute distribution statistics for adaptive difficulty
-#         entity_freqs = list(self.entity_freq.values())
-#         self.entity_freq_std = np.std(entity_freqs) if entity_freqs else 0
-#         self.entity_freq_mean = np.mean(entity_freqs) if entity_freqs else 0
-        
-#         relation_freqs = list(self.relation_freq.values())
-#         self.relation_freq_std = np.std(relation_freqs) if relation_freqs else 0
-#         self.relation_freq_mean = np.mean(relation_freqs) if relation_freqs else 0
-        
-#     def compute_difficulty_scores(self):
-#         """
-#         Compute difficulty scores using multiple metrics.
-#         Combines temporal, frequency, and structural complexity.
-#         """
-#         difficulty_scores = []
-        
-#         for t, snap in enumerate(self.train_list):
-#             if len(snap) == 0:
-#                 difficulty_scores.append(0.5)  # Neutral difficulty for empty snapshots
-#                 continue
+    #         # Baseline: uniform difficulty
+    #         if self.ablation_mode == 'none':
+    #             difficulty_scores.append(0.5)
+    #             continue
             
-#             # 1. Temporal difficulty (later = more complex due to accumulated history)
-#             temporal_score = t / len(self.train_list)
+    #         # 1. Temporal difficulty (later = more complex due to accumulated history)
+    #         temporal_score = t / len(self.train_list)
             
-#             # 2. Frequency-based difficulty (rare entities/relations = harder)
-#             frequency_scores = []
-#             for triple in snap:
-#                 s, r, o = triple
-#                 s_freq = self.entity_freq.get(s, 1)
-#                 o_freq = self.entity_freq.get(o, 1)
-#                 r_freq = self.relation_freq.get(r, 1)
+    #         # 2. Frequency-based difficulty (rare entities/relations = harder)
+    #         frequency_score = 0.0
+    #         if self.ablation_mode in ['all', 'first_3', 'first_2']:
+    #             frequency_scores = []
+    #             for triple in snap:
+    #                 s, r, o = triple
+    #                 s_freq = self.entity_freq.get(s, 1)
+    #                 o_freq = self.entity_freq.get(o, 1)
+    #                 r_freq = self.relation_freq.get(r, 1)
+                    
+    #                 # Inverse frequency score (lower frequency = higher difficulty)
+    #                 entity_rarity = 2.0 / (s_freq + o_freq)
+    #                 relation_rarity = 1.0 / r_freq
+    #                 frequency_scores.append(entity_rarity + relation_rarity * 0.5)
                 
-#                 # Inverse frequency score (lower frequency = higher difficulty)
-#                 entity_rarity = 2.0 / (s_freq + o_freq)
-#                 relation_rarity = 1.0 / r_freq
-#                 frequency_scores.append(entity_rarity + relation_rarity * 0.5)
+    #             frequency_score = np.mean(frequency_scores)
             
-#             frequency_score = np.mean(frequency_scores)
+    #         # 3. Structural complexity (entity degree diversity)
+    #         degree_score = 0.0
+    #         if self.ablation_mode in ['all', 'first_3']:
+    #             degree_scores = []
+    #             for triple in snap:
+    #                 s, r, o = triple
+    #                 s_degree = len(self.entity_degree.get(s, set()))
+    #                 o_degree = len(self.entity_degree.get(o, set()))
+    #                 degree_scores.append((s_degree + o_degree) / 2.0)
+                
+    #             degree_score = np.mean(degree_scores) if degree_scores else 0
+    #             # Normalize degree score
+    #             max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
+    #             degree_score = degree_score / max(max_degree, 1)
             
-#             # 3. Structural complexity (entity degree diversity)
-#             degree_scores = []
-#             for triple in snap:
-#                 s, r, o = triple
-#                 s_degree = len(self.entity_degree.get(s, set()))
-#                 o_degree = len(self.entity_degree.get(o, set()))
-#                 degree_scores.append((s_degree + o_degree) / 2.0)
+    #         # 4. Snapshot size complexity (larger snapshots = potentially harder)
+    #         size_score = 0.0
+    #         if self.ablation_mode == 'all':
+    #             size_score = len(snap) / max(len(s) for s in self.train_list)
             
-#             degree_score = np.mean(degree_scores) if degree_scores else 0
-#             # Normalize degree score
-#             max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
-#             degree_score = degree_score / max(max_degree, 1)
+    #         # Combine difficulty metrics with adaptive weights based on ablation mode
+    #         if self.ablation_mode == 'first_1':
+    #             # Only temporal
+    #             combined_score = temporal_score
+                
+    #         elif self.ablation_mode == 'first_2':
+    #             # Temporal + Frequency
+    #             freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+    #             temporal_weight = 1.0 - freq_weight
+                
+    #             combined_score = (
+    #                 temporal_weight * temporal_score +
+    #                 freq_weight * frequency_score
+    #             )
+                
+    #         elif self.ablation_mode == 'first_3':
+    #             # Temporal + Frequency + Degree
+    #             freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+    #             temporal_weight = 0.85 - freq_weight
+                
+    #             combined_score = (
+    #                 temporal_weight * temporal_score +
+    #                 freq_weight * frequency_score +
+    #                 0.15 * degree_score
+    #             )
+                
+    #         else:  # 'all'
+    #             # All 4 components
+    #             freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+    #             temporal_weight = 0.8 - freq_weight
+                
+    #             combined_score = (
+    #                 temporal_weight * temporal_score +
+    #                 freq_weight * frequency_score +
+    #                 0.15 * degree_score +
+    #                 0.05 * size_score
+    #             )
             
-#             # 4. Snapshot size complexity (larger snapshots = potentially harder)
-#             size_score = len(snap) / max(len(s) for s in self.train_list)
-            
-#             # Combine all difficulty metrics with adaptive weights
-#             # Higher weight on frequency for skewed datasets, temporal for regular datasets
-#             freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
-#             temporal_weight = 0.8 - freq_weight
-            
-#             combined_score = (
-#                 temporal_weight * temporal_score +
-#                 freq_weight * frequency_score +
-#                 0.15 * degree_score +
-#                 0.05 * size_score
-#             )
-            
-#             difficulty_scores.append(combined_score)
+    #         difficulty_scores.append(combined_score)
         
-#         return np.array(difficulty_scores)
+    #     return np.array(difficulty_scores)
+
 
 def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
     """
@@ -1034,135 +508,574 @@ def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
     
     return selected_indices[:n_samples]  # Ensure we don't exceed target sample count
 
-def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_list, 
-         all_ans_r_list, model_name, static_graph, mode):
+class DifficultyVisualizer:
     """
-    Modified test function with difficulty tracking
+    Visualizer for temporal knowledge graph difficulty landscape.
+    Creates histograms, KDE plots, and correlation heatmaps for difficulty metrics.
+    """
     
-    CHANGES:
-    - Added difficulty_scores parameter
-    - Added dataset_name parameter
-    - Added PerformanceTracker initialization
-    - Added per-snapshot performance tracking
-    - Added difficulty vs performance plotting at the end
+    def __init__(self, difficulty_analyzer, train_list):
+        """
+        Args:
+            difficulty_analyzer: Instance of GeneralDifficultyAnalyzer
+            train_list: List of training snapshots
+        """
+        self.analyzer = difficulty_analyzer
+        self.train_list = train_list
+        self.difficulty_scores = None
+        self.component_scores = None
+        
+    def compute_component_scores(self):
+        """
+        Compute individual difficulty components for each snapshot.
+        Returns a dictionary with temporal, frequency, degree, and size scores.
+        All scores are normalized to [0, 1] range.
+        """
+        temporal_scores = []
+        frequency_scores = []
+        degree_scores = []
+        size_scores = []
+        
+        # First pass: collect raw snapshot-level scores for normalization
+        raw_frequency_scores = []
+        raw_degree_scores = []
+        raw_size_scores = []
+        
+        for t, snap in enumerate(self.train_list):
+            if len(snap) == 0:
+                continue
+            
+            # Collect frequency scores (average per snapshot)
+            freq_vals = []
+            for triple in snap:
+                s, r, o = triple
+                s_freq = self.analyzer.entity_freq.get(s, 1)
+                o_freq = self.analyzer.entity_freq.get(o, 1)
+                r_freq = self.analyzer.relation_freq.get(r, 1)
+                
+                entity_rarity = 2.0 / (s_freq + o_freq)
+                relation_rarity = 1.0 / r_freq
+                freq_vals.append(entity_rarity + relation_rarity * 0.5)
+            
+            if freq_vals:
+                raw_frequency_scores.append(np.mean(freq_vals))
+            
+            # Collect degree scores (average per snapshot)
+            deg_vals = []
+            for triple in snap:
+                s, r, o = triple
+                s_degree = len(self.analyzer.entity_degree.get(s, set()))
+                o_degree = len(self.analyzer.entity_degree.get(o, set()))
+                deg_vals.append((s_degree + o_degree) / 2.0)
+            
+            if deg_vals:
+                raw_degree_scores.append(np.mean(deg_vals))
+            
+            # Collect size scores
+            raw_size_scores.append(len(snap))
+        
+        # Compute normalization parameters from snapshot-level scores
+        freq_min = min(raw_frequency_scores) if raw_frequency_scores else 0
+        freq_max = max(raw_frequency_scores) if raw_frequency_scores else 1
+        freq_range = max(freq_max - freq_min, 1e-8)
+        
+        degree_min = min(raw_degree_scores) if raw_degree_scores else 0
+        degree_max = max(raw_degree_scores) if raw_degree_scores else 1
+        degree_range = max(degree_max - degree_min, 1e-8)
+        
+        size_min = min(raw_size_scores) if raw_size_scores else 0
+        size_max = max(raw_size_scores) if raw_size_scores else 1
+        size_range = max(size_max - size_min, 1e-8)
+        
+        # Second pass: compute normalized scores
+        for t, snap in enumerate(self.train_list):
+            if len(snap) == 0:
+                temporal_scores.append(0.5)
+                frequency_scores.append(0.5)
+                degree_scores.append(0.5)
+                size_scores.append(0.5)
+                continue
+            
+            # 1. Temporal difficulty (already in [0, 1])
+            temporal_score = t / max(len(self.train_list) - 1, 1)
+            temporal_scores.append(temporal_score)
+            
+            # 2. Normalized frequency-based difficulty
+            freq_vals = []
+            for triple in snap:
+                s, r, o = triple
+                s_freq = self.analyzer.entity_freq.get(s, 1)
+                o_freq = self.analyzer.entity_freq.get(o, 1)
+                r_freq = self.analyzer.relation_freq.get(r, 1)
+                
+                entity_rarity = 2.0 / (s_freq + o_freq)
+                relation_rarity = 1.0 / r_freq
+                freq_vals.append(entity_rarity + relation_rarity * 0.5)
+            
+            raw_freq_score = np.mean(freq_vals) if freq_vals else 0
+            normalized_freq_score = (raw_freq_score - freq_min) / freq_range
+            frequency_scores.append(normalized_freq_score)
+            
+            # 3. Normalized structural complexity (degree)
+            deg_vals = []
+            for triple in snap:
+                s, r, o = triple
+                s_degree = len(self.analyzer.entity_degree.get(s, set()))
+                o_degree = len(self.analyzer.entity_degree.get(o, set()))
+                deg_vals.append((s_degree + o_degree) / 2.0)
+            
+            raw_degree_score = np.mean(deg_vals) if deg_vals else 0
+            normalized_degree_score = (raw_degree_score - degree_min) / degree_range
+            degree_scores.append(normalized_degree_score)
+            
+            # 4. Normalized snapshot size complexity
+            raw_size_score = len(snap)
+            normalized_size_score = (raw_size_score - size_min) / size_range
+            size_scores.append(normalized_size_score)
+        
+        # Store normalized component scores
+        self.component_scores = {
+            'Temporal': np.array(temporal_scores),
+            'Frequency': np.array(frequency_scores),
+            'Degree': np.array(degree_scores),
+            'Size': np.array(size_scores)
+        }
+        
+        # Print verification statistics
+        print("\nComponent Score Ranges (After Normalization):")
+        for component, scores in self.component_scores.items():
+            non_empty = scores[scores != 0.5]  # Exclude empty snapshots
+            if len(non_empty) > 0:
+                print(f"  {component}: [{non_empty.min():.4f}, {non_empty.max():.4f}] "
+                    f"(mean={non_empty.mean():.4f}, std={non_empty.std():.4f})")
+        
+        return self.component_scores
+    
+    def plot_difficulty_distributions(self, save_path='difficulty_distributions.png', figsize=(16, 10)):
+        """
+        Create histogram and KDE plots for each difficulty component.
+        """
+        if self.component_scores is None:
+            self.compute_component_scores()
+        
+        fig, axes = plt.subplots(2, 4, figsize=figsize)
+        colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        
+        for idx, (name, color) in enumerate(zip(component_names, colors)):
+            scores = self.component_scores[name]
+            
+            # Histogram
+            ax_hist = axes[0, idx]
+            ax_hist.hist(scores, bins=30, color=color, alpha=0.7, edgecolor='black', density=True)
+            ax_hist.set_xlabel('Difficulty Score', fontsize=11, fontweight='bold')
+            ax_hist.set_ylabel('Density', fontsize=11, fontweight='bold')
+            ax_hist.set_title(f'{name} Difficulty Distribution', fontsize=12, fontweight='bold')
+            ax_hist.grid(True, alpha=0.3, linestyle='--')
+            
+            # Add statistics
+            mean_val = np.mean(scores)
+            std_val = np.std(scores)
+            ax_hist.axvline(mean_val, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.3f}')
+            ax_hist.axvline(mean_val + std_val, color='orange', linestyle=':', linewidth=1.5, alpha=0.7, label=f'Std: {std_val:.3f}')
+            ax_hist.axvline(mean_val - std_val, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
+            ax_hist.legend(fontsize=9)
+            
+            # KDE plot
+            ax_kde = axes[1, idx]
+            try:
+                kde = stats.gaussian_kde(scores)
+                x_range = np.linspace(scores.min(), scores.max(), 200)
+                ax_kde.plot(x_range, kde(x_range), color=color, linewidth=2.5)
+                ax_kde.fill_between(x_range, kde(x_range), alpha=0.3, color=color)
+            except:
+                # Fallback if KDE fails (e.g., all values the same)
+                ax_kde.hist(scores, bins=20, color=color, alpha=0.5, density=True)
+            
+            ax_kde.set_xlabel('Difficulty Score', fontsize=11, fontweight='bold')
+            ax_kde.set_ylabel('Density (KDE)', fontsize=11, fontweight='bold')
+            ax_kde.set_title(f'{name} KDE', fontsize=12, fontweight='bold')
+            ax_kde.grid(True, alpha=0.3, linestyle='--')
+            
+            # Add quartile lines
+            q25, q50, q75 = np.percentile(scores, [25, 50, 75])
+            ax_kde.axvline(q50, color='red', linestyle='--', linewidth=2, alpha=0.7, label=f'Median: {q50:.3f}')
+            ax_kde.axvline(q25, color='gray', linestyle=':', linewidth=1.5, alpha=0.5, label=f'Q1: {q25:.3f}')
+            ax_kde.axvline(q75, color='gray', linestyle=':', linewidth=1.5, alpha=0.5, label=f'Q3: {q75:.3f}')
+            ax_kde.legend(fontsize=8)
+        
+        plt.suptitle('Difficulty Component Distributions Across Training Snapshots', 
+                     fontsize=16, fontweight='bold', y=1.00)
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved difficulty distributions to {save_path}")
+        plt.close()
+        
+        return fig
+    
+    def plot_correlation_matrix(self, save_path='difficulty_correlation.png', figsize=(10, 8)):
+        """
+        Create correlation heatmap showing relationships between difficulty components.
+        """
+        if self.component_scores is None:
+            self.compute_component_scores()
+        
+        # Create correlation matrix
+        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        n_components = len(component_names)
+        corr_matrix = np.zeros((n_components, n_components))
+        
+        for i, name1 in enumerate(component_names):
+            for j, name2 in enumerate(component_names):
+                scores1 = self.component_scores[name1]
+                scores2 = self.component_scores[name2]
+                corr_matrix[i, j] = np.corrcoef(scores1, scores2)[0, 1]
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Create heatmap
+        im = ax.imshow(corr_matrix, cmap='RdYlGn', aspect='auto', vmin=-1, vmax=1)
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Pearson Correlation Coefficient', fontsize=12, fontweight='bold')
+        
+        # Set ticks and labels
+        ax.set_xticks(np.arange(n_components))
+        ax.set_yticks(np.arange(n_components))
+        ax.set_xticklabels(component_names, fontsize=11, fontweight='bold')
+        ax.set_yticklabels(component_names, fontsize=11, fontweight='bold')
+        
+        # Rotate x labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+        
+        # Add correlation values as text
+        for i in range(n_components):
+            for j in range(n_components):
+                text_color = 'white' if abs(corr_matrix[i, j]) > 0.5 else 'black'
+                text = ax.text(j, i, f'{corr_matrix[i, j]:.3f}',
+                             ha="center", va="center", color=text_color,
+                             fontsize=12, fontweight='bold')
+        
+        ax.set_title('Difficulty Component Correlation Matrix\n(Pearson Correlation)', 
+                    fontsize=14, fontweight='bold', pad=20)
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved correlation matrix to {save_path}")
+        plt.close()
+        
+        # Print correlation analysis
+        print("\n" + "="*60)
+        print("CORRELATION ANALYSIS")
+        print("="*60)
+        for i, name1 in enumerate(component_names):
+            for j, name2 in enumerate(component_names):
+                if i < j:  # Only print upper triangle
+                    corr = corr_matrix[i, j]
+                    interpretation = self._interpret_correlation(corr)
+                    print(f"{name1} vs {name2}: {corr:.3f} - {interpretation}")
+        print("="*60 + "\n")
+        
+        return corr_matrix
+    
+    def _interpret_correlation(self, corr):
+        """Interpret correlation coefficient magnitude."""
+        abs_corr = abs(corr)
+        if abs_corr >= 0.8:
+            strength = "Very Strong"
+        elif abs_corr >= 0.6:
+            strength = "Strong"
+        elif abs_corr >= 0.4:
+            strength = "Moderate"
+        elif abs_corr >= 0.2:
+            strength = "Weak"
+        else:
+            strength = "Very Weak"
+        
+        direction = "Positive" if corr >= 0 else "Negative"
+        return f"{strength} {direction}"
+    
+    def plot_component_evolution(self, save_path='difficulty_evolution.png', figsize=(14, 8)):
+        """
+        Plot how each difficulty component evolves over time (snapshots).
+        """
+        if self.component_scores is None:
+            self.compute_component_scores()
+        
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
+        axes = axes.flatten()
+        
+        colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        
+        snapshot_indices = np.arange(len(self.train_list))
+        
+        for idx, (name, color) in enumerate(zip(component_names, colors)):
+            ax = axes[idx]
+            scores = self.component_scores[name]
+            
+            # Plot line
+            ax.plot(snapshot_indices, scores, color=color, linewidth=2.5, 
+                   marker='o', markersize=4, alpha=0.8, label=name)
+            
+            # Add trend line
+            z = np.polyfit(snapshot_indices, scores, 2)  # Quadratic fit
+            p = np.poly1d(z)
+            ax.plot(snapshot_indices, p(snapshot_indices), 
+                   color='red', linestyle='--', linewidth=2, alpha=0.6, label='Trend')
+            
+            ax.set_xlabel('Snapshot Index', fontsize=11, fontweight='bold')
+            ax.set_ylabel(f'{name} Score', fontsize=11, fontweight='bold')
+            ax.set_title(f'{name} Difficulty Evolution', fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.legend(fontsize=9)
+            
+            # Fill between for visual effect
+            ax.fill_between(snapshot_indices, scores, alpha=0.2, color=color)
+        
+        plt.suptitle('Difficulty Component Evolution Over Training Snapshots', 
+                     fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved difficulty evolution to {save_path}")
+        plt.close()
+        
+        return fig
+    
+    def plot_combined_difficulty(self, save_path='combined_difficulty.png', figsize=(14, 6)):
+        """
+        Plot the final combined difficulty score compared to individual components.
+        """
+        if self.component_scores is None:
+            self.compute_component_scores()
+        
+        # Compute combined difficulty using same weights as the analyzer
+        if self.analyzer.ablation_mode == 'all':
+            freq_weight = min(0.6, 0.3 + self.analyzer.entity_freq_std / max(self.analyzer.entity_freq_mean, 1) * 0.1)
+            temporal_weight = 0.8 - freq_weight
+            
+            combined = (
+                temporal_weight * self.component_scores['Temporal'] +
+                freq_weight * self.component_scores['Frequency'] +
+                0.15 * self.component_scores['Degree'] +
+                0.05 * self.component_scores['Size']
+            )
+        else:
+            # Fallback to equal weights
+            combined = np.mean([self.component_scores[name] for name in ['Temporal', 'Frequency', 'Degree', 'Size']], axis=0)
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+        
+        snapshot_indices = np.arange(len(self.train_list))
+        
+        # Plot 1: All components together
+        colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        
+        for name, color in zip(component_names, colors):
+            ax1.plot(snapshot_indices, self.component_scores[name], 
+                    color=color, linewidth=2, alpha=0.7, label=name)
+        
+        ax1.plot(snapshot_indices, combined, color='black', linewidth=3, 
+                linestyle='--', label='Combined', alpha=0.9)
+        ax1.set_xlabel('Snapshot Index', fontsize=11, fontweight='bold')
+        ax1.set_ylabel('Difficulty Score', fontsize=11, fontweight='bold')
+        ax1.set_title('All Difficulty Components', fontsize=12, fontweight='bold')
+        ax1.legend(fontsize=9, loc='best')
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Combined difficulty distribution
+        ax2.hist(combined, bins=25, color='purple', alpha=0.7, edgecolor='black', density=True)
+        
+        # Add KDE
+        try:
+            kde = stats.gaussian_kde(combined)
+            x_range = np.linspace(combined.min(), combined.max(), 200)
+            ax2.plot(x_range, kde(x_range), color='darkviolet', linewidth=2.5, label='KDE')
+        except:
+            pass
+        
+        mean_val = np.mean(combined)
+        ax2.axvline(mean_val, color='red', linestyle='--', linewidth=2, 
+                   label=f'Mean: {mean_val:.3f}')
+        
+        ax2.set_xlabel('Combined Difficulty Score', fontsize=11, fontweight='bold')
+        ax2.set_ylabel('Density', fontsize=11, fontweight='bold')
+        ax2.set_title('Combined Difficulty Distribution', fontsize=12, fontweight='bold')
+        ax2.legend(fontsize=9)
+        ax2.grid(True, alpha=0.3)
+        
+        plt.suptitle('Combined Difficulty Score Analysis', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved combined difficulty to {save_path}")
+        plt.close()
+        
+        return combined
+    
+    def generate_all_visualizations(self, output_dir='./visualizations/'):
+        """
+        Generate all difficulty landscape visualizations at once.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print("\n" + "="*60)
+        print("GENERATING DIFFICULTY LANDSCAPE VISUALIZATIONS")
+        print("="*60 + "\n")
+        
+        # 1. Distribution plots
+        self.plot_difficulty_distributions(
+            save_path=os.path.join(output_dir, 'difficulty_distributions.png')
+        )
+        
+        # 2. Correlation matrix
+        self.plot_correlation_matrix(
+            save_path=os.path.join(output_dir, 'difficulty_correlation.png')
+        )
+        
+        # 3. Evolution over time
+        self.plot_component_evolution(
+            save_path=os.path.join(output_dir, 'difficulty_evolution.png')
+        )
+        
+        # 4. Combined difficulty
+        self.plot_combined_difficulty(
+            save_path=os.path.join(output_dir, 'combined_difficulty.png')
+        )
+        
+        print("\n" + "="*60)
+        print("ALL VISUALIZATIONS GENERATED SUCCESSFULLY")
+        print(f"Output directory: {output_dir}")
+        print("="*60 + "\n")
+        
+        # Print summary statistics
+        self._print_summary_statistics()
+    
+    def _print_summary_statistics(self):
+        """Print summary statistics for all difficulty components."""
+        if self.component_scores is None:
+            self.compute_component_scores()
+        
+        print("\n" + "="*60)
+        print("DIFFICULTY COMPONENT STATISTICS")
+        print("="*60)
+        
+        for name in ['Temporal', 'Frequency', 'Degree', 'Size']:
+            scores = self.component_scores[name]
+            print(f"\n{name}:")
+            print(f"  Mean:   {np.mean(scores):.4f}")
+            print(f"  Std:    {np.std(scores):.4f}")
+            print(f"  Min:    {np.min(scores):.4f}")
+            print(f"  Max:    {np.max(scores):.4f}")
+            print(f"  Median: {np.median(scores):.4f}")
+            print(f"  Range:  {np.ptp(scores):.4f}")
+        
+        print("="*60 + "\n")
+
+def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_list, all_ans_r_list, model_name, static_graph, mode):
+    """
+    :param model: model used to test
+    :param history_list:    all input history snap shot list, not include output label train list or valid list
+    :param test_list:   test triple snap shot list
+    :param num_rels:    number of relations
+    :param num_nodes:   number of nodes
+    :param use_cuda:
+    :param all_ans_list:     dict used to calculate filter mrr (key and value are all int variable not tensor)
+    :param all_ans_r_list:     dict used to calculate filter mrr (key and value are all int variable not tensor)
+    :param model_name:
+    :param static_graph
+    :param mode
+    :return mrr_raw, mrr_filter, mrr_raw_r, mrr_filter_r
     """
     ranks_raw, ranks_filter, mrr_raw_list, mrr_filter_list = [], [], [], []
     ranks_raw_r, ranks_filter_r, mrr_raw_list_r, mrr_filter_list_r = [], [], [], []
     ranks_raw_inv, ranks_filter_inv, mrr_raw_list_inv, mrr_filter_list_inv = [], [], [], []
     ranks_raw_r_inv, ranks_filter_r_inv, mrr_raw_list_r_inv, mrr_filter_list_r_inv = [], [], [], []
-    
-    # NEW: Initialize performance tracker
-    performance_tracker = PerformanceTracker(len(test_list))
+    ranks_raw1, ranks_filter1 = [],[]
 
     idx = 0
     if mode == "test":
+        # test mode: load parameter form file
         print("------------store_path----------------",model_name)
         if use_cuda:
             checkpoint = torch.load(model_name, map_location=torch.device(args.gpu))
         else:
             checkpoint = torch.load(model_name, map_location=torch.device('cpu'))
-        print("Load Model name: {}. Using best epoch : {}".format(model_name, checkpoint['epoch']))
+        print("Load Model name: {}. Using best epoch : {}".format(model_name, checkpoint['epoch']))  # use best stat checkpoint
         print("\n"+"-"*10+"start testing"+"-"*10+"\n")
         model.load_state_dict(checkpoint['state_dict'])
 
     model.eval()
+    # do not have inverse relation in test input
     input_list = [snap for snap in history_list[-args.test_history_len:]]
+
     his_list = history_list[:]
     subg_arr = np.concatenate(his_list)
+    # sr_to_sro = np.load('../data/{}/his_dict_new/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
     sr_to_sro = np.load('../data/{}/his_dict/train_s_r.npy'.format(args.dataset), allow_pickle=True).item()
 
+    
     for time_idx, test_snap in enumerate(tqdm(test_list)):
         history_glist = [build_sub_graph(num_nodes, num_rels, g, use_cuda, args.gpu) for g in input_list]
-        inverse_triples = test_snap[:, [2, 1, 0]]
+        inverse_triples =test_snap[:, [2, 1, 0]]
         inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
         
-        que_pair = e2r(test_snap, num_rels)
-        que_pair_inv = e2r(inverse_triples, num_rels)
-        sub_snap, sub_snap_inv = get_sample_from_history_graph3(subg_arr, sr_to_sro, test_snap, num_nodes, num_rels, use_cuda, args.gpu)
+        que_pair =  e2r(test_snap, num_rels)
+        
+        que_pair_inv =  e2r(inverse_triples, num_rels)
+
+        sub_snap,sub_snap_inv = get_sample_from_history_graph3(subg_arr, sr_to_sro, test_snap , num_nodes,num_rels,use_cuda, args.gpu)
 
         test_triples_input = torch.LongTensor(test_snap).cuda() if use_cuda else torch.LongTensor(test_snap)
         test_triples_input_inv = torch.LongTensor(inverse_triples).cuda() if use_cuda else torch.LongTensor(inverse_triples)
-        
         test_triples, final_score = model.predict(que_pair, sub_snap, time_idx, history_glist, num_rels, static_graph, test_triples_input, use_cuda)
         inv_test_triples, inv_final_score = model.predict(que_pair_inv, sub_snap_inv, time_idx, history_glist, num_rels, static_graph, test_triples_input_inv, use_cuda)
 
         mrr_filter_snap, mrr_snap, rank_raw, rank_filter = utils.get_total_rank(test_triples, final_score, all_ans_list[time_idx], eval_bz=1000, rel_predict=0)
         mrr_filter_snap_inv, mrr_snap_inv, rank_raw_inv, rank_filter_inv = utils.get_total_rank(inv_test_triples, inv_final_score, all_ans_list[time_idx], eval_bz=1000, rel_predict=0)
-        
-        # NEW: Calculate hits@k for this snapshot
-        def calculate_hits(ranks):
-            hits = []
-            for k in [1, 3, 10]:
-                hits.append((ranks <= k).float().mean().item())
-            return hits
-        
-        hits_filter = calculate_hits(rank_filter)
-        hits_filter_inv = calculate_hits(rank_filter_inv)
-        
-        # NEW: Average metrics for this snapshot
-        avg_mrr = (mrr_filter_snap + mrr_filter_snap_inv) / 2
-        avg_hits = [(hits_filter[i] + hits_filter_inv[i]) / 2 for i in range(len(hits_filter))]
-        
-        # NEW: Track performance for this snapshot
-        performance_tracker.update(time_idx, avg_mrr, avg_hits)
-        
-        # Original code continues...
+            # used to global statistic
         ranks_raw.append(rank_raw)
         ranks_filter.append(rank_filter)
         ranks_raw_inv.append(rank_raw_inv)
         ranks_filter_inv.append(rank_filter_inv)
-        
+            # used to show slide results
         if args.multi_step:
             if not args.relation_evaluation:    
                 predicted_snap = utils.construct_snap(test_triples, num_nodes, num_rels, final_score, args.topk)
+            # else:
+            #     predicted_snap = utils.construct_snap_r(test_triples, num_nodes, num_rels, final_r_score, args.topk)
             if len(predicted_snap):
                 input_list.pop(0)
                 input_list.append(predicted_snap)
         else:
             input_list.pop(0)
             input_list.append(test_snap)
-        
+            # subg_arr = np.concatenate([subg_arr,test_snap])
+            # print(np.shape(subg_arr))
         idx += 1
 
-    # Original metric calculations
-    mrr_raw, hit_raw = utils.stat_ranks(ranks_raw, "raw")
-    mrr_filter, hit_filter = utils.stat_ranks(ranks_filter, "filter")
-    mrr_raw_inv, hit_raw_inv = utils.stat_ranks(ranks_raw_inv, "raw_inv")
-    mrr_filter_inv, hit_filter_inv = utils.stat_ranks(ranks_filter_inv, "filter_inv")
-    
-    all_mrr_raw = (mrr_raw + mrr_raw_inv) / 2
-    all_mrr_filter = (mrr_filter + mrr_filter_inv) / 2
-    all_hit_raw, all_hit_filter = [], []
-    
+    mrr_raw,hit_raw = utils.stat_ranks(ranks_raw, "raw")
+    mrr_filter,hit_filter = utils.stat_ranks(ranks_filter, "filter")
+    mrr_raw_inv,hit_raw_inv = utils.stat_ranks(ranks_raw_inv, "raw_inv")
+    mrr_filter_inv,hit_filter_inv = utils.stat_ranks(ranks_filter_inv, "filter_inv")
+    all_mrr_raw = (mrr_raw+mrr_raw_inv)/2
+    all_mrr_filter = (mrr_filter+mrr_filter_inv)/2
+    all_hit_raw, all_hit_filter,all_hit_raw_r, all_hit_filter_r = [],[],[],[]
     for hit_id in range(len(hit_raw)):
-        all_hit_raw.append((hit_raw[hit_id] + hit_raw_inv[hit_id]) / 2)
-        all_hit_filter.append((hit_filter[hit_id] + hit_filter_inv[hit_id]) / 2)
+        all_hit_raw.append((hit_raw[hit_id]+hit_raw_inv[hit_id])/2)
+        all_hit_filter.append((hit_filter[hit_id]+hit_filter_inv[hit_id])/2)
+    print("(all_raw) MRR, Hits@ (1,3,5):{:.6f}, {:.6f}, {:.6f}, {:.6f}".format( all_mrr_raw.item(), all_hit_raw[0],all_hit_raw[1],all_hit_raw[2]))
+    print("(all_filter) MRR, Hits@ (1,3,5):{:.6f}, {:.6f}, {:.6f}, {:.6f}".format( all_mrr_filter.item(), all_hit_filter[0],all_hit_filter[1],all_hit_filter[2]))
     
-    print("(all_raw) MRR, Hits@ (1,3,10):{:.6f}, {:.6f}, {:.6f}, {:.6f}".format(
-        all_mrr_raw.item(), all_hit_raw[0], all_hit_raw[1], all_hit_raw[2]))
-    print("(all_filter) MRR, Hits@ (1,3,10):{:.6f}, {:.6f}, {:.6f}, {:.6f}".format(
-        all_mrr_filter.item(), all_hit_filter[0], all_hit_filter[1], all_hit_filter[2]))
-    
-    test_difficulty_scores = compute_test_difficulty_scores(
-        train_list=history_list,  # Use training data for statistics
-        test_list=test_list,
-        num_rels=num_rels
-    )
-    
-    # Analyze difficulty vs performance
-    correlations = analyze_test_difficulty_vs_performance(
-        test_list=test_list,
-        test_difficulty_scores=test_difficulty_scores,
-        test_mrr=test_mrr_per_snapshot,
-        test_h1=test_h1_per_snapshot,
-        test_h10=test_h10_per_snapshot
-    )
-    
-    # Original CSV writing code
-    if mode == "test":
+    # 文件转储 - file dump
+    if mode == "test": # test模式写入，train模式忽略
         filename = '../result/'+ args.dataset + ".csv"
-        if os.path.isfile(filename) == False:
+        if os.path.isfile(filename) == False:# If the file does not exist, create it
             with open (filename,'w', newline='') as f:
+                # 写入列名 Write column names
                 fieldnames=['encoder','opn','pre_type','use_static','use_cl','gpu','datetime','pre_weight',
                             'train_len','test_len','temperature','lr','n_hidden',
                             'filter_MRR','filter_H@1','filter_H@3','filter_H@10',
@@ -1171,7 +1084,7 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
                             'filter_all_MRR','filter_all_H@1','filter_all_H@3','filter_all_H@10']
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
-        
+        # 写入数据 data input
         with open (filename,'a', newline='') as f:
             writer = csv.writer(f)
             row={'encoder':args.encoder,'opn':args.opn,'pre_type':args.pre_type,'use_static':args.add_static_graph,'use_cl':args.use_cl,'gpu':args.gpu,'datetime':datetime.now(),'pre_weight':args.pre_weight,
@@ -1182,8 +1095,29 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
                 'filter_all_MRR':all_mrr_filter.item(),'filter_all_H@1':all_hit_filter[0],'filter_all_H@3':all_hit_filter[1],'filter_all_H@10':all_hit_filter[2]}
             writer.writerow(row.values())
             
-    return all_mrr_raw, all_mrr_filter, correlations
+    return all_mrr_raw, all_mrr_filter
+
+def visualize_difficulty_landscape(train_list, dataset_name='ICEWS'):
+    """
+    Standalone function to generate difficulty visualizations.
     
+    Args:
+        train_list: List of training snapshots from utils.split_by_time(data.train)
+        dataset_name: Name of the dataset (for output directory)
+    """
+    from collections import defaultdict
+    
+    # Create difficulty analyzer
+    difficulty_analyzer = GeneralDifficultyAnalyzer(train_list, ablation_mode='all')
+    
+    # Create visualizer
+    visualizer = DifficultyVisualizer(difficulty_analyzer, train_list)
+    
+    # Generate all visualizations
+    output_dir = f'./visualizations_{dataset_name}/'
+    visualizer.generate_all_visualizations(output_dir=output_dir)
+    
+    return visualizer   
 
 def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=None):
     global mrr_raw, mrr_filter
@@ -1209,22 +1143,14 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     valid_list = utils.split_by_time(data.valid)
     test_list = utils.split_by_time(data.test)
 
+    print("Generating difficulty landscape visualizations...")
+    visualizer = visualize_difficulty_landscape(train_list, args.dataset)
+
     num_nodes = data.num_nodes
     num_rels = data.num_rels
 
-    print(f"Train snapshots: {len(train_list)}")  # Should be ~300
-    print(f"Test snapshots: {len(test_list)}")    # Should be ~30
-    
-    # Compute difficulty for TEST set (not training!)
-    test_difficulty_scores = compute_test_difficulty_scores(
-        train_list=train_list,
-        test_list=test_list,
-        num_rels=data.num_rels
-    )
-
     # Initialize general curriculum learning components
     use_curriculum = getattr(args, 'use_curriculum', True)
-    # difficulty_scores = None  # NEW: Initialize this variable
     
     if use_curriculum:
         curriculum_scheduler = GeneralCurriculumScheduler(
@@ -1475,9 +1401,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                                     all_ans_list_r_valid, 
                                     model_state_file, 
                                     static_graph, 
-                                    mode="train",
-                                    difficulty_scores=None,  # NEW: No analysis during training
-                                    dataset_name=args.dataset)  # NEW: Pass dataset name)
+                                    mode="train")
                 
                 # Early stopping with patience
                 if not args.relation_evaluation:
@@ -1556,9 +1480,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                             all_ans_list_r_test, 
                             model_state_file, 
                             static_graph, 
-                            mode="test",
-                            difficulty_scores=difficulty_scores,  # NEW: Pass difficulty scores!
-                            dataset_name=args.dataset)  # NEW: Pass dataset name!)
+                            mode="test")
                             
         print("="*60)
         print("Training completed successfully!")
@@ -1597,7 +1519,7 @@ if __name__ == '__main__':
                         help="save model accordding to the relation evalution")
     parser.add_argument("--pre-type",  type=str, default="short",
                         help=["long","short", "all"])
-    parser.add_argument("--use-cl",  action='store_true', default=False,
+    parser.add_argument("--use-cl",  action='store_true', default=True,
                         help="use the info of  contrastive learning")
     parser.add_argument("--temperature", type=float, default=0.07,
                         help="the temperature of cl")
