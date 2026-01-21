@@ -23,7 +23,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
-
+from scipy import stats
 
 
 def update_dict(subg_arr, s_to_sro, sr_to_sro,sro_to_fre, num_rels):
@@ -635,9 +635,9 @@ class DifficultyVisualizer:
         
         # Store normalized component scores
         self.component_scores = {
-            'Temporal': np.array(temporal_scores),
-            'Frequency': np.array(frequency_scores),
-            'Degree': np.array(degree_scores),
+            'Temp': np.array(temporal_scores),
+            'Freq': np.array(frequency_scores),
+            'Struct': np.array(degree_scores),
             'Size': np.array(size_scores)
         }
         
@@ -660,7 +660,7 @@ class DifficultyVisualizer:
         
         fig, axes = plt.subplots(2, 4, figsize=figsize)
         colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
-        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        component_names = ['Temp', 'Freq', 'Struct', 'Size']
         
         for idx, (name, color) in enumerate(zip(component_names, colors)):
             scores = self.component_scores[name]
@@ -721,7 +721,7 @@ class DifficultyVisualizer:
             self.compute_component_scores()
         
         # Create correlation matrix
-        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        component_names = ['Temp', 'Freq', 'Struct', 'Size']
         n_components = len(component_names)
         corr_matrix = np.zeros((n_components, n_components))
         
@@ -808,7 +808,7 @@ class DifficultyVisualizer:
         axes = axes.flatten()
         
         colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
-        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        component_names = ['Temp', 'Freq', 'Struct', 'Size']
         
         snapshot_indices = np.arange(len(self.train_list))
         
@@ -844,7 +844,7 @@ class DifficultyVisualizer:
         
         return fig
     
-    def plot_combined_difficulty(self, save_path='combined_difficulty.png', figsize=(14, 6)):
+    def plot_combined_difficulty(self, save_path='combined_difficulty.png', figsize=(14, 6), dataset_name='ICEWS'):
         """
         Plot the final combined difficulty score compared to individual components.
         """
@@ -857,57 +857,63 @@ class DifficultyVisualizer:
             temporal_weight = 0.8 - freq_weight
             
             combined = (
-                temporal_weight * self.component_scores['Temporal'] +
-                freq_weight * self.component_scores['Frequency'] +
-                0.15 * self.component_scores['Degree'] +
+                temporal_weight * self.component_scores['Temp'] +
+                freq_weight * self.component_scores['Freq'] +
+                0.15 * self.component_scores['Struct'] +
                 0.05 * self.component_scores['Size']
             )
         else:
             # Fallback to equal weights
-            combined = np.mean([self.component_scores[name] for name in ['Temporal', 'Frequency', 'Degree', 'Size']], axis=0)
+            combined = np.mean([self.component_scores[name] for name in ['Temp', 'Freq', 'Struct', 'Size']], axis=0)
         
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
         
         snapshot_indices = np.arange(len(self.train_list))
         
         # Plot 1: All components together
-        colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
-        component_names = ['Temporal', 'Frequency', 'Degree', 'Size']
+        # colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+        colors = ["#1F77B4", "#C44E52", "#FFA600", "#2F9E44", "#B22222"]
+        component_names = ['Temp', 'Freq', 'Struct', 'Size']
         
         for name, color in zip(component_names, colors):
             ax1.plot(snapshot_indices, self.component_scores[name], 
-                    color=color, linewidth=2, alpha=0.7, label=name)
+                    color=color, linewidth=3, alpha=0.7, label=name)
         
         ax1.plot(snapshot_indices, combined, color='black', linewidth=3, 
-                linestyle='--', label='Combined', alpha=0.9)
-        ax1.set_xlabel('Snapshot Index', fontsize=11, fontweight='bold')
-        ax1.set_ylabel('Difficulty Score', fontsize=11, fontweight='bold')
-        ax1.set_title('All Difficulty Components', fontsize=12, fontweight='bold')
-        ax1.legend(fontsize=9, loc='best')
+                linestyle='--', label='Composite', alpha=0.9)
+        ax1.set_xlabel('Snapshot Index', fontsize=18, fontweight='bold')
+        ax1.set_ylabel('Difficulty Score', fontsize=18, fontweight='bold')
+        ax1.tick_params(axis='both', which='major', labelsize=18)
+        # ax1.set_title(dataset_name, fontsize=18, fontweight='bold')
+        ax1.legend(prop={'size': 18, 'weight': 'bold'}, loc=2, ncol=3, mode="expand", borderaxespad=0., framealpha=0.5)
         ax1.grid(True, alpha=0.3)
         
         # Plot 2: Combined difficulty distribution
-        ax2.hist(combined, bins=25, color='purple', alpha=0.7, edgecolor='black', density=True)
+        ax2.hist(combined, bins=25, color='#4C72B0', alpha=0.7, edgecolor='black', density=True)
+        kde = stats.gaussian_kde(combined)
+        x_range = np.linspace(combined.min(), combined.max(), 200)
+        ax2.plot(x_range, kde(x_range), color='#2B3A4A', linewidth=3, label='KDE')
         
         # Add KDE
-        try:
-            kde = stats.gaussian_kde(combined)
-            x_range = np.linspace(combined.min(), combined.max(), 200)
-            ax2.plot(x_range, kde(x_range), color='darkviolet', linewidth=2.5, label='KDE')
-        except:
-            pass
+        # try:
+        #     kde = stats.gaussian_kde(combined)
+        #     x_range = np.linspace(combined.min(), combined.max(), 200)
+        #     ax2.plot(x_range, kde(x_range), color='darkviolet', linewidth=2.5, label='KDE')
+        # except:
+        #     pass
         
         mean_val = np.mean(combined)
-        ax2.axvline(mean_val, color='red', linestyle='--', linewidth=2, 
-                   label=f'Mean: {mean_val:.3f}')
+        ax2.axvline(mean_val, color='#C44E52', linestyle='--', linewidth=4, 
+                   label=f'Mean: {mean_val:.2f}')
         
-        ax2.set_xlabel('Combined Difficulty Score', fontsize=11, fontweight='bold')
-        ax2.set_ylabel('Density', fontsize=11, fontweight='bold')
-        ax2.set_title('Combined Difficulty Distribution', fontsize=12, fontweight='bold')
-        ax2.legend(fontsize=9)
+        ax2.set_xlabel('Composite Difficulty Score', fontsize=18, fontweight='bold')
+        ax2.set_ylabel('Density', fontsize=18, fontweight='bold')
+        ax2.tick_params(axis='both', which='major', labelsize=18)
+        # ax2.set_title('Combined Difficulty Distribution', fontsize=18, fontweight='bold')
+        ax2.legend(prop={'size': 18, 'weight': 'bold'})
         ax2.grid(True, alpha=0.3)
         
-        plt.suptitle('Combined Difficulty Score Analysis', fontsize=14, fontweight='bold')
+        plt.suptitle('Composite Difficulty Score Analysis', fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Saved combined difficulty to {save_path}")
@@ -915,7 +921,7 @@ class DifficultyVisualizer:
         
         return combined
     
-    def generate_all_visualizations(self, output_dir='./visualizations/'):
+    def generate_all_visualizations(self, output_dir='./visualizations/', dataset_name='ICEWS'):
         """
         Generate all difficulty landscape visualizations at once.
         """
@@ -943,7 +949,7 @@ class DifficultyVisualizer:
         
         # 4. Combined difficulty
         self.plot_combined_difficulty(
-            save_path=os.path.join(output_dir, 'combined_difficulty.png')
+            save_path=os.path.join(output_dir, 'combined_difficulty.png'), dataset_name='icews'
         )
         
         print("\n" + "="*60)
@@ -963,7 +969,7 @@ class DifficultyVisualizer:
         print("DIFFICULTY COMPONENT STATISTICS")
         print("="*60)
         
-        for name in ['Temporal', 'Frequency', 'Degree', 'Size']:
+        for name in ['Temp', 'Freq', 'Struct', 'Size']:
             scores = self.component_scores[name]
             print(f"\n{name}:")
             print(f"  Mean:   {np.mean(scores):.4f}")
@@ -1115,7 +1121,7 @@ def visualize_difficulty_landscape(train_list, dataset_name='ICEWS'):
     
     # Generate all visualizations
     output_dir = f'./visualizations_{dataset_name}/'
-    visualizer.generate_all_visualizations(output_dir=output_dir)
+    visualizer.generate_all_visualizations(output_dir=output_dir, dataset_name=dataset_name)
     
     return visualizer   
 
