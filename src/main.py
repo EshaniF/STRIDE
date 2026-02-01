@@ -7,6 +7,7 @@ import sys
 import time
 import pickle
 import dgl
+import json
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -24,7 +25,8 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 from scipy import stats
-
+# from adaptive_weight_test import AdaptiveWeightTracker
+from adaptive_weight_test import AdaptiveWeightPrinter
 
 def update_dict(subg_arr, s_to_sro, sr_to_sro,sro_to_fre, num_rels):
     # Update the query based on the input graph at each time 
@@ -1180,7 +1182,13 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     else:
         print("Curriculum Learning Disabled - Using standard training")
         print(f" use contrastive ? : ", args.use_cl)
-
+    weight_printer = AdaptiveWeightPrinter()
+    if use_curriculum:
+        weight_printer.print_adaptive_weights(
+            difficulty_analyzer=difficulty_analyzer,
+            ablation_mode='all',
+            dataset_name=args.dataset.upper()
+        )
     # Load answer lists for evaluation
     all_ans_list_test = utils.load_all_answers_for_time_filter(data.test, num_rels, num_nodes, False)
     all_ans_list_r_test = utils.load_all_answers_for_time_filter(data.test, num_rels, num_nodes, True)
@@ -1408,7 +1416,13 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                                     model_state_file, 
                                     static_graph, 
                                     mode="train")
-                
+                if use_curriculum:
+                    weight_tracker.record_weights(
+                        epoch=epoch,
+                        difficulty_analyzer=difficulty_analyzer,
+                        curriculum_scheduler=curriculum_scheduler,
+                        ablation_mode='all'
+                    )
                 # Early stopping with patience
                 if not args.relation_evaluation:
                     if mrr_filter < best_mrr:
@@ -1467,7 +1481,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
             
         #     plt.savefig('lossfig.png', dpi=300, bbox_inches='tight')
         #     plt.close()
-
+        
         # Final testing
         print("\n" + "="*60)
         print("Starting final evaluation on test set...")
