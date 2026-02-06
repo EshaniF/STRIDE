@@ -57,7 +57,7 @@ class ConvTransE(torch.nn.Module):
     def __init__(self, num_entities, embedding_dim, input_dropout=0, hidden_dropout=0, feature_map_dropout=0, channels=50, kernel_size=3, use_bias=True):
 
         super(ConvTransE, self).__init__()
-        # 初始化relation embeddings
+        # relation embeddings
         # self.emb_rel = torch.nn.Embedding(num_relations, embedding_dim, padding_idx=0)
 
         self.inp_drop = torch.nn.Dropout(input_dropout)

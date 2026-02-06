@@ -561,7 +561,7 @@ def get_sample_from_history_graph(subg_arr,s_to_sro, sr_to_sro,sro_to_fre, tripl
 
 
 def update_dict(subg_arr, s_to_sro, sr_to_sro,num_rels):
-    # 根据输入的每一个时间的图来更新查询查询 - Update the query based on the graph at each time input
+    # Update the query based on the graph at each time input
     inverse_subg = subg_arr[:, [2, 1, 0]]
     inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
     subg_triples = np.concatenate([subg_arr, inverse_subg])
@@ -577,9 +577,9 @@ def split_by_time(data):
     for i in range(len(data)):
         t = data[i][3]
         train = data[i]
-        # latest_t表示读取的上一个三元组发生的时刻，要求数据集中的三元组是按照时间发生顺序排序的 
+        # latest_t
         #latest_t Indicates the time when the last triplet read occurred. The triples in the data set must be sorted in chronological order.
-        if latest_t != t:  # 同一时刻发生的三元组 - Triples that occur at the same time
+        if latest_t != t:  #  Triples that occur at the same time
             # show snapshot
             latest_t = t
             if len(snapshot):
@@ -587,7 +587,7 @@ def split_by_time(data):
                 snapshots_num += 1
             snapshot = []
         snapshot.append(train[:3])
-    # 加入最后一个shapshot - Add the last snapshot
+    #  the last snapshot
     if len(snapshot) > 0:
         snapshot_list.append(np.array(snapshot).copy())
         snapshots_num += 1

@@ -252,7 +252,7 @@ class RecurrentRGCN(nn.Module):
 
         if self.use_static:
             static_graph = static_graph.to(self.gpu)
-            static_graph.ndata['h'] = torch.cat((self.dynamic_emb, self.words_emb), dim=0)  # 演化得到的表示，和wordemb满足静态图约束: The evolved representation satisfies the static graph constraints of wordemb
+            static_graph.ndata['h'] = torch.cat((self.dynamic_emb, self.words_emb), dim=0)  #The evolved representation satisfies the static graph constraints of wordemb
             self.statci_rgcn_layer(static_graph, [])
             static_emb = static_graph.ndata.pop('h')[:self.num_ents, :]
             static_emb = F.normalize(static_emb) if self.layer_norm else static_emb
@@ -261,7 +261,7 @@ class RecurrentRGCN(nn.Module):
             self.h = F.normalize(self.dynamic_emb) if self.layer_norm else self.dynamic_emb[:, :]
             static_emb = None
 
-        #-----------------全局历史建模 - Global history modeling -------------------------------------
+        #----------------- Global history modeling -------------------------------------
         self.his_ent, subg_index = self.all_GCN(self.h, sub_graph,use_cuda)
         his_r_emb = F.normalize(self.emb_rel)
         his_att = F.softmax(self.w5(query_mask+ self.his_ent),dim=1)
@@ -288,19 +288,19 @@ class RecurrentRGCN(nn.Module):
                 x_input = self.emb_rel + x_input
                 current_h = self.rgcn.forward(g, self.h, [self.emb_rel, self.emb_rel])
                 current_h = F.normalize(current_h) if self.layer_norm else current_h
-                # current_h1 = F.sigmoid(self.w6(current_h))   # 让相应的维度大小早）0~1之间，通过mask矩阵获取query time 出现的实体，其他实体设置为0
+                
                 #Set the corresponding dimension size to between 0 and 1, obtain the entities that appear at query time through the mask matrix, and set other entities to 0
                 att_e = F.softmax(self.w2(query_mask+current_h),dim=1)
                 
                 if i == 0:
-                    self.h_0 = self.entity_cell(current_h, self.h)    # 第1层输入: Layer 1 Input
+                    self.h_0 = self.entity_cell(current_h, self.h)    # Layer 1 Input
                     self.h_0 = F.normalize(self.h_0) if self.layer_norm else self.h_0
-                    # self.hr = self.relation_cell(x_input, self.emb_rel)    # 第1层输入 - layer 1 input
+                    # self.hr = self.relation_cell(x_input, self.emb_rel)    # layer 1 input
                     # self.hr = F.normalize(self.hr) if self.layer_norm else self.hr
                 else:
-                    self.h_0 = self.entity_cell(current_h, self.h_0)  # 第2层输出==下一时刻第一层输入 : The output of the second layer == the input of the first layer at the next moment
+                    self.h_0 = self.entity_cell(current_h, self.h_0)  # The output of the second layer == the input of the first layer at the next moment
                     self.h_0 = F.normalize(self.h_0) if self.layer_norm else self.h_0
-                    # self.hr = self.relation_cell(x_input, self.hr)  # 第2层输出==下一时刻第一层输入:  : The output of the second layer == the input of the first layer at the next moment
+                    # self.hr = self.relation_cell(x_input, self.hr)  # The output of the second layer == the input of the first layer at the next moment
                     # self.hr = F.normalize(self.hr) if self.layer_norm else self.hr
                 time_weight = F.sigmoid(torch.mm(x_input, self.time_gate_weight) + self.time_gate_bias)
                 self.hr = time_weight * x_input + (1-time_weight) * self.emb_rel
@@ -326,7 +326,7 @@ class RecurrentRGCN(nn.Module):
         with torch.no_grad():
             all_triples = test_triplets
             
-            #-----------------查询数据处理 Query data processing-------------------------------------
+            #-----------------Query data processing-------------------------------------
             uniq_e = que_pair[0]
             r_len = que_pair[1]
             r_idx = que_pair[2]
@@ -339,7 +339,7 @@ class RecurrentRGCN(nn.Module):
 
             query_mask = torch.zeros((self.num_ents,self.h_dim)).to(self.gpu) if use_cuda else torch.zeros(1)
             e1_emb = self.dynamic_emb[uniq_e]
-            rel_emb = e_input[uniq_e] #实体所连的所有关系池化: Pooling of all relationships connected to an entity
+            rel_emb = e_input[uniq_e] #Pooling of all relationships connected to an entity
             query_emb = self.w1(torch.concat([e1_emb,rel_emb],dim=1))
             query_mask[uniq_e] = query_emb
 
@@ -369,7 +369,7 @@ class RecurrentRGCN(nn.Module):
         
         all_triples = triples
 
-        ### --------------查询数据处理 - Query data processing-----------------------
+        ### --------------Query data processing-----------------------
         uniq_e = que_pair[0]
         r_len = que_pair[1]
         r_idx = que_pair[2]

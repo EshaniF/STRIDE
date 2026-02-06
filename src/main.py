@@ -28,92 +28,6 @@ from scipy import stats
 # from adaptive_weight_test import AdaptiveWeightTracker
 from adaptive_weight_test import AdaptiveWeightPrinter
 
-def update_dict(subg_arr, s_to_sro, sr_to_sro,sro_to_fre, num_rels):
-    # Update the query based on the input graph at each time 
-    inverse_subg = subg_arr[:, [2, 1, 0]]
-    #creating new relations for inverse of existing ones
-    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
-    #join both triplets
-    subg_triples = np.concatenate([subg_arr, inverse_subg])
-    for j, (src, rel, dst) in enumerate(subg_triples):
-        #s_sro gives a dictionary sourceentity : sro {1: {(1, 40, 0), (1, 10, 0)}, 2: {(2, 30, 1)}, 4: {(4, 30, 5)}}
-        s_to_sro[src].add((src, rel, dst))
-        #sr_sro gives a dictionary (sourc, rel) : dst {(1, 10): {0}, (2, 20): {1}, (4, 30): {5}, (1, 40): {0}, (2, 30): {1}})
-        sr_to_sro[(src, rel)].add(dst)
-        
-def e2r(triplets, num_rels):
-    # Statistics on the same query entity connecting different relationships
-    src, rel, dst = triplets.transpose()
-    # get all relations
-    # uniq_e = np.concatenate((src, dst))
-    uniq_e = np.unique(src)
-    # generate r2e
-    e_to_r = defaultdict(set)
-    for j, (src, rel, dst) in enumerate(triplets):
-        e_to_r[src].add(rel)
-        # e_to_r[dst].add(rel+num_rels)
-    r_len = []
-    r_idx = []
-    idx = 0
-    for e in uniq_e:
-        r_len.append((idx,idx+len(e_to_r[e])))
-        r_idx.extend(list(e_to_r[e]))
-        idx += len(e_to_r[e])
-    uniq_e = torch.from_numpy(np.array(uniq_e)).long().cuda()
-    r_len = torch.from_numpy(np.array(r_len)).long().cuda()
-    r_idx = torch.from_numpy(np.array(r_idx)).long().cuda()
-    #uniq_e returns unique subject entities in triplets
-    #r_idx reurns relation idxs
-    return [uniq_e, r_len, r_idx]
-
-def get_sample_from_history_graph3(subg_arr, sr_to_sro, triples,num_nodes, num_rels, use_cuda, gpu):
-    # q_to_sro = defaultdict(list)
-    q_to_sro = set()
-    inverse_triples = triples[:, [2, 1, 0]]
-    inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
-    all_triples = np.concatenate([triples, inverse_triples])
-    # ent_set = set(all_triples[:, 0])
-    src_set = set(triples[:, 0])
-    dst_set = set(triples[:, 0])
-
-    # ----------------二阶邻居采样 Second-order neighbor sampling-----------------------
-    # er_list = list(set([(tri[0],tri[1]) for tri in all_triples]))
-    er_list = list(set([(tri[0],tri[1]) for tri in triples]))
-    er_list_inv = list(set([(tri[0],tri[1]) for tri in inverse_triples]))
-    # ent_list = list(ent_set)
-    # rel_list = list(set(all_triples[:, 1]))
-
-    inverse_subg = subg_arr[:, [2, 1, 0]]
-    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
-    subg_triples = np.concatenate([subg_arr, inverse_subg])
-    df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
-    #整合重复三元组并统计三元组的频率，将三元组的频率作为第四列数据
-    # Integrate repeated triples and count the frequency of triples, using the frequency of triples as the fourth column of data
-    subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
-    keys = list(sr_to_sro.keys())
-    values = list(sr_to_sro.values())
-    df_dic =  pd.DataFrame({'sr': keys, 'dst': values}) #将查询字段转化为pandas - Convert query field to pandas
-
-    dst_df = df_dic.query('sr in @er_list')  #获取查询实体和关系的pandas - Get query entities and relationships pandas
-    dst_get = dst_df['dst'].values    #获取目标尾实体 - Get the target tail entity
-    two_ent = set().union(*dst_get)   #将头实体与尾实体进行整合 - Integrate head and tail entities
-    all_ent = list(src_set|two_ent)   
-    result = subg_df.query('src in @all_ent')
-
-    dst_df_inv = df_dic.query('sr in @er_list_inv')  #获取查询实体和关系的pandas - Get query entities and relationships pandas
-    dst_get_inv = dst_df_inv['dst'].values    #获取目标尾实体 - Get the target tail entity
-    two_ent_inv = set().union(*dst_get_inv)   #将头实体与尾实体进行整合 - Integrate head and tail entities
-    all_ent_inv = list(dst_set|two_ent_inv)  
-    result_inv = subg_df.query('src in @all_ent_inv')
-    #----------------二阶邻居采样 Second-order neighbor sampling-----------------------
-    # result = subg_df.query('src in @src_set')
-    q_tri = result.to_numpy()
-    q_tri_inv = result_inv.to_numpy()
-
-    his_sub = build_graph(num_nodes, num_rels, q_tri, use_cuda, gpu) 
-    his_sub_inv = build_graph(num_nodes, num_rels, q_tri_inv, use_cuda, gpu)
-    return  his_sub,his_sub_inv
-
 class GeneralCurriculumScheduler:
     """
     General curriculum learning scheduler that adapts to any temporal knowledge graph dataset.
@@ -141,22 +55,22 @@ class GeneralCurriculumScheduler:
         
         if self.strategy == 'adaptive':
             # Adaptive strategy: starts slow, accelerates in middle, slows at end
-            # Good for both highly skewed (GDELT) and regular (ICEWS) datasets
+            
             ratio = self.start_ratio + (1.0 - self.start_ratio) * (
                 0.5 * (1 - np.cos(progress * np.pi)) + 0.3 * progress
             )
         elif self.strategy == 'cosine':
-            # Smooth cosine progression
+            # Cosine progression
             ratio = self.start_ratio + (1.0 - self.start_ratio) * (1 - np.cos(progress * np.pi)) / 2
         else:
-            # Linear progression (default)
+            # Linear progression 
             ratio = self.start_ratio + (1.0 - self.start_ratio) * progress
             
         return min(ratio, 1.0)
 
 class GeneralDifficultyAnalyzer:
     """
-    General difficulty analyzer that works for any temporal knowledge graph dataset.
+    General difficulty analyzer that works for any TKG dataset.
     Combines multiple difficulty metrics to handle various data characteristics.
     """
     
@@ -216,10 +130,10 @@ class GeneralDifficultyAnalyzer:
         
         # Pre-compute normalization factors - collect SNAPSHOT-LEVEL averages
         all_frequency_scores = []  # per-snapshot averages
-        all_degree_scores = []      # per-snapshot averages
-        all_size_scores = []        # per-snapshot sizes
+        all_degree_scores = []      
+        all_size_scores = []        
         
-        # First pass: collect raw SNAPSHOT scores for normalization
+        # collect raw SNAPSHOT scores for normalization
         for t, snap in enumerate(self.train_list):
             if len(snap) == 0:
                 continue
@@ -269,21 +183,21 @@ class GeneralDifficultyAnalyzer:
         size_max = max(all_size_scores) if all_size_scores else 1
         size_range = max(size_max - size_min, 1e-8)
         
-        # Second pass: compute normalized difficulty scores
+        # compute normalized difficulty scores
         for t, snap in enumerate(self.train_list):
             if len(snap) == 0:
                 difficulty_scores.append(0.5)
                 continue
             
-            # Baseline: uniform difficulty
+            # uniform difficulty
             if self.ablation_mode == 'none':
                 difficulty_scores.append(0.5)
                 continue
             
-            # 1. Temporal difficulty (already in [0, 1])
+            # Temporal difficulty 
             temporal_score = t / max(len(self.train_list) - 1, 1)
             
-            # 2. Normalized frequency-based difficulty
+            # Normalized frequency-based difficulty
             frequency_score = 0.0
             if self.ablation_mode in ['all', 'first_3', 'first_2']:
                 frequency_scores_snap = []
@@ -303,7 +217,7 @@ class GeneralDifficultyAnalyzer:
                 
                 frequency_score = np.mean(frequency_scores_snap)
             
-            # 3. Normalized structural complexity (entity degree diversity)
+            # Normalized structural complexity (entity degree diversity)
             degree_score = 0.0
             if self.ablation_mode in ['all', 'first_3']:
                 degree_scores_snap = []
@@ -319,7 +233,7 @@ class GeneralDifficultyAnalyzer:
                 
                 degree_score = np.mean(degree_scores_snap) if degree_scores_snap else 0
             
-            # 4. Normalized snapshot size complexity
+            # Normalized snapshot size complexity
             size_score = 0.0
             if self.ablation_mode == 'all':
                 size_score = (len(snap) - size_min) / size_range
@@ -358,13 +272,12 @@ class GeneralDifficultyAnalyzer:
                     0.05 * size_score
                 )
             
-            # Ensure final score is in [0, 1] (should be guaranteed by construction, but clip for safety)
             combined_score = np.clip(combined_score, 0.0, 1.0)
             difficulty_scores.append(combined_score)
         
         scores_array = np.array(difficulty_scores)
         
-        # Final verification and normalization (optional, for extra safety)
+        # normalization
         if len(scores_array) > 0:
             scores_min = scores_array.min()
             scores_max = scores_array.max()
@@ -377,7 +290,7 @@ class GeneralDifficultyAnalyzer:
     # def compute_difficulty_scores(self):
     #     """
     #     Compute difficulty scores using multiple metrics.
-    #     Combines temporal, frequency, and structural complexity based on ablation mode.
+    #     ablation mode.
     #     """
     #     difficulty_scores = []
         
@@ -391,10 +304,10 @@ class GeneralDifficultyAnalyzer:
     #             difficulty_scores.append(0.5)
     #             continue
             
-    #         # 1. Temporal difficulty (later = more complex due to accumulated history)
+    #         # Temporal difficulty 
     #         temporal_score = t / len(self.train_list)
             
-    #         # 2. Frequency-based difficulty (rare entities/relations = harder)
+    #         # Frequency-based difficulty (rare entities/relations = harder)
     #         frequency_score = 0.0
     #         if self.ablation_mode in ['all', 'first_3', 'first_2']:
     #             frequency_scores = []
@@ -411,7 +324,7 @@ class GeneralDifficultyAnalyzer:
                 
     #             frequency_score = np.mean(frequency_scores)
             
-    #         # 3. Structural complexity (entity degree diversity)
+    #         # Structural complexity (entity degree diversity)
     #         degree_score = 0.0
     #         if self.ablation_mode in ['all', 'first_3']:
     #             degree_scores = []
@@ -426,7 +339,7 @@ class GeneralDifficultyAnalyzer:
     #             max_degree = max(len(degrees) for degrees in self.entity_degree.values()) if self.entity_degree else 1
     #             degree_score = degree_score / max(max_degree, 1)
             
-    #         # 4. Snapshot size complexity (larger snapshots = potentially harder)
+    #         # Snapshot size complexity (larger snapshots = potentially harder)
     #         size_score = 0.0
     #         if self.ablation_mode == 'all':
     #             size_score = len(snap) / max(len(s) for s in self.train_list)
@@ -476,20 +389,16 @@ class GeneralDifficultyAnalyzer:
 
 def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
     """
-    Get training samples using a general curriculum strategy.
-    Balances temporal order with difficulty for optimal learning progression.
+    Get training samples.
     """
     n_samples = max(1, min(int(len(train_list) * current_ratio), len(train_list)))
     
-    # Combine temporal order with difficulty-based selection
-    # This works well for both ICEWS (temporal patterns) and GDELT (frequency skew)
     
     # Create temporal preference (earlier samples preferred)
     temporal_preference = np.arange(len(train_list)) / len(train_list)
     
     # Combine temporal and difficulty scores
-    # Early in curriculum: prefer easy + early samples
-    # Later in curriculum: include harder + later samples
+
     temporal_weight = max(0.3, 1.0 - current_ratio)  # Decrease temporal weight as curriculum progresses
     difficulty_weight = 1.0 - temporal_weight
     
@@ -501,14 +410,14 @@ def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
     # Select samples with combined scoring
     selected_indices = np.argsort(combined_scores)[:n_samples]
     
-    # Ensure we always include some early temporal samples for context
+    # Ensure to include some early temporal samples for context
     min_temporal_samples = max(1, min(n_samples // 4, 5))
     early_samples = list(range(1, min(min_temporal_samples + 1, len(train_list))))
     
     # Combine and deduplicate
     selected_indices = sorted(list(set(selected_indices) | set(early_samples)))
     
-    return selected_indices[:n_samples]  # Ensure we don't exceed target sample count
+    return selected_indices[:n_samples]  # Ensure don't exceed target sample count
 
 class DifficultyVisualizer:
     """
@@ -598,11 +507,11 @@ class DifficultyVisualizer:
                 size_scores.append(0.5)
                 continue
             
-            # 1. Temporal difficulty (already in [0, 1])
+            # Temporal difficulty (already in [0, 1])
             temporal_score = t / max(len(self.train_list) - 1, 1)
             temporal_scores.append(temporal_score)
             
-            # 2. Normalized frequency-based difficulty
+            # Normalized frequency-based difficulty
             freq_vals = []
             for triple in snap:
                 s, r, o = triple
@@ -618,7 +527,7 @@ class DifficultyVisualizer:
             normalized_freq_score = (raw_freq_score - freq_min) / freq_range
             frequency_scores.append(normalized_freq_score)
             
-            # 3. Normalized structural complexity (degree)
+            # Normalized structural complexity (degree)
             deg_vals = []
             for triple in snap:
                 s, r, o = triple
@@ -630,7 +539,7 @@ class DifficultyVisualizer:
             normalized_degree_score = (raw_degree_score - degree_min) / degree_range
             degree_scores.append(normalized_degree_score)
             
-            # 4. Normalized snapshot size complexity
+            # Normalized snapshot size complexity
             raw_size_score = len(snap)
             normalized_size_score = (raw_size_score - size_min) / size_range
             size_scores.append(normalized_size_score)
@@ -983,6 +892,92 @@ class DifficultyVisualizer:
         
         print("="*60 + "\n")
 
+def update_dict(subg_arr, s_to_sro, sr_to_sro,sro_to_fre, num_rels):
+    # Update the query based on the input graph at each time 
+    inverse_subg = subg_arr[:, [2, 1, 0]]
+    #creating new relations for inverse of existing ones
+    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+    #join both triplets
+    subg_triples = np.concatenate([subg_arr, inverse_subg])
+    for j, (src, rel, dst) in enumerate(subg_triples):
+        #s_sro gives a dictionary sourceentity : sro {1: {(1, 40, 0), (1, 10, 0)}, 2: {(2, 30, 1)}, 4: {(4, 30, 5)}}
+        s_to_sro[src].add((src, rel, dst))
+        #sr_sro gives a dictionary (sourc, rel) : dst {(1, 10): {0}, (2, 20): {1}, (4, 30): {5}, (1, 40): {0}, (2, 30): {1}})
+        sr_to_sro[(src, rel)].add(dst)
+        
+def e2r(triplets, num_rels):
+    # Statistics on the same query entity connecting different relationships
+    src, rel, dst = triplets.transpose()
+    # get all relations
+    # uniq_e = np.concatenate((src, dst))
+    uniq_e = np.unique(src)
+    # generate r2e
+    e_to_r = defaultdict(set)
+    for j, (src, rel, dst) in enumerate(triplets):
+        e_to_r[src].add(rel)
+        # e_to_r[dst].add(rel+num_rels)
+    r_len = []
+    r_idx = []
+    idx = 0
+    for e in uniq_e:
+        r_len.append((idx,idx+len(e_to_r[e])))
+        r_idx.extend(list(e_to_r[e]))
+        idx += len(e_to_r[e])
+    uniq_e = torch.from_numpy(np.array(uniq_e)).long().cuda()
+    r_len = torch.from_numpy(np.array(r_len)).long().cuda()
+    r_idx = torch.from_numpy(np.array(r_idx)).long().cuda()
+    #uniq_e returns unique subject entities in triplets
+    #r_idx reurns relation idxs
+    return [uniq_e, r_len, r_idx]
+
+def get_sample_from_history_graph3(subg_arr, sr_to_sro, triples,num_nodes, num_rels, use_cuda, gpu):
+    # q_to_sro = defaultdict(list)
+    q_to_sro = set()
+    inverse_triples = triples[:, [2, 1, 0]]
+    inverse_triples[:, 1] = inverse_triples[:, 1] + num_rels
+    all_triples = np.concatenate([triples, inverse_triples])
+    # ent_set = set(all_triples[:, 0])
+    src_set = set(triples[:, 0])
+    dst_set = set(triples[:, 0])
+
+    # ----------------Second-order neighbor sampling-----------------------
+    # er_list = list(set([(tri[0],tri[1]) for tri in all_triples]))
+    er_list = list(set([(tri[0],tri[1]) for tri in triples]))
+    er_list_inv = list(set([(tri[0],tri[1]) for tri in inverse_triples]))
+    # ent_list = list(ent_set)
+    # rel_list = list(set(all_triples[:, 1]))
+
+    inverse_subg = subg_arr[:, [2, 1, 0]]
+    inverse_subg[:, 1] = inverse_subg[:, 1] + num_rels
+    subg_triples = np.concatenate([subg_arr, inverse_subg])
+    df = pd.DataFrame(np.array(subg_triples), columns=['src', 'rel', 'dst'])
+    
+    # Integrate repeated triples and count the frequency of triples, using the frequency of triples as the fourth column of data
+    subg_df = df.groupby(df.columns.tolist()).size().reset_index().rename(columns={0:'freq'}) 
+    keys = list(sr_to_sro.keys())
+    values = list(sr_to_sro.values())
+    df_dic =  pd.DataFrame({'sr': keys, 'dst': values}) #Convert query field to pandas
+
+    dst_df = df_dic.query('sr in @er_list')  #Get query entities and relationships pandas
+    dst_get = dst_df['dst'].values    #Get the target tail entity
+    two_ent = set().union(*dst_get)   #Integrate head and tail entities
+    all_ent = list(src_set|two_ent)   
+    result = subg_df.query('src in @all_ent')
+
+    dst_df_inv = df_dic.query('sr in @er_list_inv')  #Get query entities and relationships pandas
+    dst_get_inv = dst_df_inv['dst'].values    #Get the target tail entity
+    two_ent_inv = set().union(*dst_get_inv)   #Integrate head and tail entities
+    all_ent_inv = list(dst_set|two_ent_inv)  
+    result_inv = subg_df.query('src in @all_ent_inv')
+    #----------------Second-order neighbor sampling-----------------------
+    # result = subg_df.query('src in @src_set')
+    q_tri = result.to_numpy()
+    q_tri_inv = result_inv.to_numpy()
+
+    his_sub = build_graph(num_nodes, num_rels, q_tri, use_cuda, gpu) 
+    his_sub_inv = build_graph(num_nodes, num_rels, q_tri_inv, use_cuda, gpu)
+    return  his_sub,his_sub_inv
+
 def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_list, all_ans_r_list, model_name, static_graph, mode):
     """
     :param model: model used to test
@@ -1078,12 +1073,12 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
     print("(all_raw) MRR, Hits@ (1,3,5):{:.6f}, {:.6f}, {:.6f}, {:.6f}".format( all_mrr_raw.item(), all_hit_raw[0],all_hit_raw[1],all_hit_raw[2]))
     print("(all_filter) MRR, Hits@ (1,3,5):{:.6f}, {:.6f}, {:.6f}, {:.6f}".format( all_mrr_filter.item(), all_hit_filter[0],all_hit_filter[1],all_hit_filter[2]))
     
-    # 文件转储 - file dump
-    if mode == "test": # test模式写入，train模式忽略
+    #file dump
+    if mode == "test": 
         filename = '../result/'+ args.dataset + ".csv"
         if os.path.isfile(filename) == False:# If the file does not exist, create it
             with open (filename,'w', newline='') as f:
-                # 写入列名 Write column names
+                # Write column names
                 fieldnames=['encoder','opn','pre_type','use_static','use_cl','gpu','datetime','pre_weight',
                             'train_len','test_len','temperature','lr','n_hidden',
                             'filter_MRR','filter_H@1','filter_H@3','filter_H@10',
@@ -1092,7 +1087,7 @@ def test(model, history_list, test_list, num_rels, num_nodes, use_cuda, all_ans_
                             'filter_all_MRR','filter_all_H@1','filter_all_H@3','filter_all_H@10']
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
-        # 写入数据 data input
+        #  data input
         with open (filename,'a', newline='') as f:
             writer = csv.writer(f)
             row={'encoder':args.encoder,'opn':args.opn,'pre_type':args.pre_type,'use_static':args.add_static_graph,'use_cl':args.use_cl,'gpu':args.gpu,'datetime':datetime.now(),'pre_weight':args.pre_weight,
@@ -1198,7 +1193,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     model_name = "{}-len{}-gpu{}-lr{}-{}-{}-{}-{}-{}-{}-{}"\
         .format(args.dataset, args.train_history_len, args.gpu, args.lr, args.temperature, args.pre_weight, 
                 args.use_cl, args.pre_type, args.n_hidden, args.encoder, str(time.time()))
-    model_state_file = '../models/' + 'esh' 
+    model_state_file = '../models/' + 'stride' 
     print("Sanity Check: stat name : {}".format(model_state_file))
     print("Sanity Check: Is cuda available ? {}".format(torch.cuda.is_available()))
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
@@ -1416,13 +1411,13 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                                     model_state_file, 
                                     static_graph, 
                                     mode="train")
-                if use_curriculum:
-                    weight_tracker.record_weights(
-                        epoch=epoch,
-                        difficulty_analyzer=difficulty_analyzer,
-                        curriculum_scheduler=curriculum_scheduler,
-                        ablation_mode='all'
-                    )
+                # if use_curriculum:
+                #     weight_tracker.record_weights(
+                #         epoch=epoch,
+                #         difficulty_analyzer=difficulty_analyzer,
+                #         curriculum_scheduler=curriculum_scheduler,
+                #         ablation_mode='all'
+                #     )
                 # Early stopping with patience
                 if not args.relation_evaluation:
                     if mrr_filter < best_mrr:
@@ -1504,9 +1499,6 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                             
         print("="*60)
         print("Training completed successfully!")
-        if use_curriculum:
-            print(f"Curriculum learning provided structured learning progression")
-            print(f"Dataset characteristics automatically detected and handled")
         print("="*60)
         print('date time now is',datetime.now())
         

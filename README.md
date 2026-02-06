@@ -32,7 +32,7 @@ GDELT
 python main.py -d GDELT --train-history-len 7 --test-history-len 7 --dilate-len 1 --lr 0.001 --n-layers 2 --evaluate-every 1 --gpu=0 --n-hidden 200 --self-loop --decoder convtranse --encoder uvrgcn --layer-norm --weight 0.5  --entity-prediction --angle 10 --discount 1 --pre-weight 0.9  --pre-type all --add-static-graph  --temperature 0.03 --run-statistic --n-epochs 100 --evaluate-every 1 --use-cl --cl_approach original
 ```
 
-*********************************************************************************************
+*************************************************************************************************************************************************
 Code partially adapted from authors' implementation of LogCL, RE-GCN, TIRGN models.
 W. Chen, H. Wan, Y. Wu, S. Zhao, J. Cheng, Y. Li, and Y. Lin,
 “Local-global history-aware contrastive learning for temporal knowledge
@@ -49,3 +49,5 @@ Y. Li, S. Sun, and J. Zhao, “Tirgn: Time-guided recurrent graph network
 with local-global historical patterns for temporal knowledge graph
 reasoning.” in IJCAI, 2022, pp. 2152–2158.
 
+****************************************************************************************************************************************************
+Claude (Anthropic) and Gemini (Google) were used as programming aids during development; All code was reviewed, tested, and modified by the author.

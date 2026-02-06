@@ -4,14 +4,13 @@ from collections import defaultdict
 
 def diagnose_difficulty_computation(train_list):
     """
-    Diagnostic tool to understand why difficulty scores are compressed.
-    Run this to see what's happening with your data.
+    Diagnostic tool for difficulty score computation
     """
     print("="*60)
     print("DIFFICULTY SCORE DIAGNOSTIC REPORT")
     print("="*60)
     
-    # Basic dataset statistics
+    # dataset statistics
     print(f"\n1. DATASET OVERVIEW:")
     print(f"   Total snapshots: {len(train_list)}")
     print(f"   Snapshot sizes: min={min(len(s) for s in train_list)}, "
@@ -113,53 +112,38 @@ def diagnose_difficulty_computation(train_list):
     if snapshot_stats:
         print(f"     {snapshot_stats[-1]}")
     
-    # Check for problematic patterns
-    print(f"\n6. POTENTIAL ISSUES:")
-    
-    # Issue 1: Very similar entity frequencies across snapshots
     avg_freqs = [s['avg_entity_freq'] for s in snapshot_stats]
     freq_variance = np.std(avg_freqs) / np.mean(avg_freqs) if np.mean(avg_freqs) > 0 else 0
     print(f"   Entity frequency variance across snapshots: {freq_variance:.4f}")
-    if freq_variance < 0.1:
-        print(f"   ⚠️  WARNING: Very low variance in entity frequencies!")
-        print(f"       All snapshots might have similar entity frequency profiles.")
     
-    # Issue 2: Similar snapshot sizes
     sizes = [s['size'] for s in snapshot_stats]
     size_variance = np.std(sizes) / np.mean(sizes) if np.mean(sizes) > 0 else 0
     print(f"   Snapshot size variance: {size_variance:.4f}")
-    if size_variance < 0.1:
-        print(f"   ⚠️  WARNING: Very uniform snapshot sizes!")
     
-    # Issue 3: Similar degree distributions
     avg_degrees = [s['avg_degree'] for s in snapshot_stats]
     degree_variance = np.std(avg_degrees) / np.mean(avg_degrees) if np.mean(avg_degrees) > 0 else 0
     print(f"   Degree variance across snapshots: {degree_variance:.4f}")
-    if degree_variance < 0.1:
-        print(f"   ⚠️  WARNING: Very uniform degree distributions!")
     
-    # Visualization
-    print(f"\n7. CREATING VISUALIZATION...")
     
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
     # Plot 1: Snapshot sizes
     axes[0, 0].plot([s['size'] for s in snapshot_stats], 'b-o')
-    axes[0, 0].set_title('Snapshot Sizes Over Time')
+    axes[0, 0].set_title('Snapshot Sizes vs Time')
     axes[0, 0].set_xlabel('Snapshot Index')
     axes[0, 0].set_ylabel('Number of Triples')
     axes[0, 0].grid(True, alpha=0.3)
     
     # Plot 2: Average entity frequency
     axes[0, 1].plot(avg_freqs, 'r-o')
-    axes[0, 1].set_title('Avg Entity Frequency Over Time')
+    axes[0, 1].set_title('Avg Entity Frequency vs Time')
     axes[0, 1].set_xlabel('Snapshot Index')
     axes[0, 1].set_ylabel('Average Frequency')
     axes[0, 1].grid(True, alpha=0.3)
     
     # Plot 3: Average degree
     axes[0, 2].plot(avg_degrees, 'g-o')
-    axes[0, 2].set_title('Avg Entity Degree Over Time')
+    axes[0, 2].set_title('Avg Entity Degree vs Time')
     axes[0, 2].set_xlabel('Snapshot Index')
     axes[0, 2].set_ylabel('Average Degree')
     axes[0, 2].grid(True, alpha=0.3)

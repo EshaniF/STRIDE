@@ -6,8 +6,7 @@ import os
 
 class AdaptiveWeightPrinter:
     """
-    Simplified tracker that just prints the adaptive weight values
-    since they remain constant throughout training.
+    Simplified tracker that prints the adaptive weight values
     """
     
     def print_adaptive_weights(self, difficulty_analyzer, ablation_mode='all', dataset_name=''):
@@ -23,7 +22,7 @@ class AdaptiveWeightPrinter:
         print(f"ADAPTIVE WEIGHT VALUES - {dataset_name}")
         print("="*60)
         
-        # Calculate weights based on ablation mode (same logic as in your code)
+        # Calculate weights based on ablation mode 
         if ablation_mode == 'first_2' or ablation_mode == 'first_3' or ablation_mode == 'all':
             # Calculate frequency weight
             freq_weight = min(0.6, 0.3 + difficulty_analyzer.entity_freq_std / 
@@ -77,8 +76,6 @@ class AdaptiveWeightPrinter:
         else:
             print(f"  → Balanced: Equal weight on temporal and frequency patterns")
         
-        print("\nNote: These weights remain CONSTANT throughout training.")
-        print("They are calculated once from dataset statistics, not learned.")
         print("="*60 + "\n")
         
         return {
