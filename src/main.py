@@ -938,7 +938,7 @@ def get_sample_from_history_graph3(subg_arr, sr_to_sro, triples,num_nodes, num_r
     all_triples = np.concatenate([triples, inverse_triples])
     # ent_set = set(all_triples[:, 0])
     src_set = set(triples[:, 0])
-    dst_set = set(triples[:, 0])
+    dst_set = set(triples[:, 2])
 
     # ----------------Second-order neighbor sampling-----------------------
     # er_list = list(set([(tri[0],tri[1]) for tri in all_triples]))
