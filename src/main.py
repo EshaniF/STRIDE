@@ -1,3 +1,4 @@
+#Training script for curriculum learning
 import csv
 from datetime import datetime
 import argparse
@@ -407,17 +408,36 @@ def get_curriculum_samples(train_list, difficulty_scores, current_ratio):
         difficulty_weight * difficulty_scores
     )
     
-    # Select samples with combined scoring
-    selected_indices = np.argsort(combined_scores)[:n_samples]
+    # # Select samples with combined scoring
+    # selected_indices = np.argsort(combined_scores)[:n_samples]
     
+    # # Ensure to include some early temporal samples for context
+    # min_temporal_samples = max(1, min(n_samples // 4, 5))
+    # early_samples = list(range(1, min(min_temporal_samples + 1, len(train_list))))
+    
+    # # Combine and deduplicate
+    # selected_indices = sorted(list(set(selected_indices) | set(early_samples)))
+    
+    # return selected_indices[:n_samples]  # Ensure don't exceed target sample count
+    # Select samples with combined scoring
+    ranked_indices = np.argsort(combined_scores)  # easiest -> hardest, full ranking
+    selected_set = set(ranked_indices[:n_samples].tolist())
+
     # Ensure to include some early temporal samples for context
     min_temporal_samples = max(1, min(n_samples // 4, 5))
-    early_samples = list(range(1, min(min_temporal_samples + 1, len(train_list))))
-    
-    # Combine and deduplicate
-    selected_indices = sorted(list(set(selected_indices) | set(early_samples)))
-    
-    return selected_indices[:n_samples]  # Ensure don't exceed target sample count
+    early_samples = set(range(1, min(min_temporal_samples + 1, len(train_list))))
+
+    # Union in the forced early samples, then re-rank the UNION by
+    # combined_scores (not by chronological index) before truncating back
+    # to n_samples -- sorting by index and slicing here was the bug: it
+    # silently discarded the difficulty ranking once the union pushed the
+    # set above n_samples, degrading the curriculum toward "train on the
+    # earliest snapshots" rather than "train on the n_samples easiest
+    # snapshots by combined score."
+    union_indices = selected_set | early_samples
+    union_sorted_by_difficulty = sorted(union_indices, key=lambda idx: combined_scores[idx])
+
+    return union_sorted_by_difficulty[:n_samples]
 
 class DifficultyVisualizer:
     """
