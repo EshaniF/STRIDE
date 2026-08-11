@@ -1531,7 +1531,7 @@ if __name__ == '__main__':
                         help="gpu")
     parser.add_argument("--batch-size", type=int, default=1,
                         help="batch-size")
-    parser.add_argument("-d", "--dataset", type=str, default="GDELT",
+    parser.add_argument("-d", "--dataset", type=str, default="ICEWS18",
                         help="dataset to use")
     parser.add_argument("--test", action='store_true', default=False,
                         help="load stat from dir and directly test")
@@ -1543,22 +1543,22 @@ if __name__ == '__main__':
                         help="do multi-steps inference without ground truth")
     parser.add_argument("--topk", type=int, default=10,
                         help="choose top k entities as results when do multi-steps without ground truth")
-    parser.add_argument("--add-static-graph",  action='store_true', default=False,
+    parser.add_argument("--add-static-graph",  action='store_true', default=True,
                         help="use the info of static graph")
     parser.add_argument("--add-rel-word", action='store_true', default=False,
                         help="use words in relaitons")
     parser.add_argument("--relation-evaluation", action='store_true', default=False,
                         help="save model accordding to the relation evalution")
-    parser.add_argument("--pre-type",  type=str, default="short",
+    parser.add_argument("--pre-type",  type=str, default="all",
                         help=["long","short", "all"])
-    parser.add_argument("--use-cl",  action='store_true', default=True,
+    parser.add_argument("--use-cl",  action='store_true', default=False,
                         help="use the info of  contrastive learning")
-    parser.add_argument("--temperature", type=float, default=0.07,
+    parser.add_argument("--temperature", type=float, default=0.03,
                         help="the temperature of cl")
     # configuration for encoder RGCN stat
     parser.add_argument("--weight", type=float, default=1,
                         help="weight of static constraint")
-    parser.add_argument("--pre-weight", type=float, default=0.7,
+    parser.add_argument("--pre-weight", type=float, default=0.9,
                         help="weight of entity prediction task")
     parser.add_argument("--discount", type=float, default=1,
                         help="discount of weight of static constraint")
@@ -1614,7 +1614,7 @@ if __name__ == '__main__':
                         help="do relation prediction")
 
     # configuration for stat training
-    parser.add_argument("--n-epochs", type=int, default=500,
+    parser.add_argument("--n-epochs", type=int, default=70,
                         help="number of minimum training epochs on each time step")
     parser.add_argument("--lr", type=float, default=0.001,
                         help="learning rate")
@@ -1636,9 +1636,9 @@ if __name__ == '__main__':
                         help="feat dropout for decoder")
 
     # configuration for sequences stat
-    parser.add_argument("--train-history-len", type=int, default=10,
+    parser.add_argument("--train-history-len", type=int, default=7,
                         help="history length")
-    parser.add_argument("--test-history-len", type=int, default=20,
+    parser.add_argument("--test-history-len", type=int, default=7,
                         help="history length for test")
     parser.add_argument("--dilate-len", type=int, default=1,
                         help="dilate history graph")
