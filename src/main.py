@@ -263,7 +263,7 @@ class GeneralDifficultyAnalyzer:
                 )
                 
             else:  # 'all'
-                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.05)
                 temporal_weight = 0.8 - freq_weight
                 
                 combined_score = (
@@ -1551,7 +1551,7 @@ if __name__ == '__main__':
                         help="save model accordding to the relation evalution")
     parser.add_argument("--pre-type",  type=str, default="all",
                         help=["long","short", "all"])
-    parser.add_argument("--use-cl",  action='store_true', default=False,
+    parser.add_argument("--use-cl",  action='store_true', default=True,
                         help="use the info of  contrastive learning")
     parser.add_argument("--temperature", type=float, default=0.03,
                         help="the temperature of cl")

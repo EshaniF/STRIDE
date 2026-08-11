@@ -348,7 +348,7 @@ class RecurrentRGCN(nn.Module):
             if self.pre_type == "all":
 
                 scores_ob,_= self.decoder_ob.forward( embedding,r_emb, all_triples,  his_emb, self.pre_weight, self.pre_type)
-                score_en = F.log_softmax(scores_ob, dim=1)
+                scores_en = F.log_softmax(scores_ob, dim=1)
 
             # scores_en = torch.log(score_en)
             return all_triples, scores_en
@@ -397,7 +397,7 @@ class RecurrentRGCN(nn.Module):
 
         if self.pre_type == "all":
             scores_ob, _= self.decoder_ob.forward(embedding, r_emb, all_triples, his_emb,self.pre_weight, self.pre_type)
-            score_en = F.log_softmax(scores_ob, dim=1)
+            scores_en = F.log_softmax(scores_ob, dim=1)
 
 
         # scores_en = torch.log(score_en)
