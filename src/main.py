@@ -263,7 +263,7 @@ class GeneralDifficultyAnalyzer:
                 )
                 
             else:  # 'all'
-                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.05)
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
                 temporal_weight = 0.8 - freq_weight
                 
                 combined_score = (
@@ -1213,7 +1213,9 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     model_name = "{}-len{}-gpu{}-lr{}-{}-{}-{}-{}-{}-{}-{}"\
         .format(args.dataset, args.train_history_len, args.gpu, args.lr, args.temperature, args.pre_weight, 
                 args.use_cl, args.pre_type, args.n_hidden, args.encoder, str(time.time()))
-    model_state_file = '../models/' + 'stride' 
+    # model_state_file = '../models/' + 'stride' 
+    model_state_file = '../models/{}_{}_{}'.format(
+        args.dataset, args.use_curriculum, args.use_cl)
     print("Sanity Check: stat name : {}".format(model_state_file))
     print("Sanity Check: Is cuda available ? {}".format(torch.cuda.is_available()))
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
@@ -1275,6 +1277,12 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
 
     # optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
+
+    memory_log = []
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+    total_train_start = time.time()
+    # === end new ==
 
     if args.test and os.path.exists(model_state_file):
         mrr_raw, mrr_filter = test(model,
@@ -1416,6 +1424,14 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                          np.mean(losses_r) if losses_r else 0.0, 
                          np.mean(losses_static) if losses_static else 0.0, 
                          curriculum_info, best_mrr))
+            
+            # === NEW: sample memory/time for this epoch ===
+            torch.cuda.synchronize()
+            elapsed = time.time() - total_train_start
+            current_mem_mb = torch.cuda.memory_allocated() / (1024 ** 2)
+            memory_log.append({"elapsed_time_s": elapsed, "gpu_memory_mb": current_mem_mb})
+            # === end new ===
+
             if use_cuda:
                 torch.cuda.empty_cache()
             # Validation
@@ -1459,6 +1475,25 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
         plt.title('Plot of training loss')
         plt.plot(avgloss)
         plt.savefig('lossfig.png')
+
+        # === NEW: finalize and save memory/time log ===
+        torch.cuda.synchronize()
+        total_train_time = time.time() - total_train_start
+        peak_gpu_memory_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+
+        print(f"Total training time: {total_train_time:.1f}s")
+        print(f"Peak GPU memory: {peak_gpu_memory_mb:.1f} MB")
+
+        run_name = "logcl_curriculum" if use_curriculum else "logcl_baseline"
+        with open(f"{run_name}_memory_log.json", "w") as f:
+            json.dump({
+                "run_name": run_name,
+                "total_train_time_s": total_train_time,
+                "peak_gpu_memory_mb": peak_gpu_memory_mb,
+                "memory_log": memory_log,
+            }, f, indent=2)
+        # === end new ===
+
         # # Save loss plot
         # if avgloss:
         #     np.savetxt('lossval.txt', avgloss)
