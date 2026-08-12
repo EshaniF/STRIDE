@@ -1173,7 +1173,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_rels = data.num_rels
 
     # Initialize general curriculum learning components
-    use_curriculum = getattr(args, 'use_curriculum', True)
+    use_curriculum = getattr(args, 'use_curriculum', False)
     
     if use_curriculum:
         curriculum_scheduler = GeneralCurriculumScheduler(
@@ -1215,7 +1215,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
                 args.use_cl, args.pre_type, args.n_hidden, args.encoder, str(time.time()))
     # model_state_file = '../models/' + 'stride' 
     model_state_file = '../models/{}_{}_{}'.format(
-        args.dataset, args.use_curriculum, args.use_cl)
+        args.dataset, use_curriculum, args.use_cl)
     print("Sanity Check: stat name : {}".format(model_state_file))
     print("Sanity Check: Is cuda available ? {}".format(torch.cuda.is_available()))
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
