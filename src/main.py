@@ -28,6 +28,7 @@ warnings.filterwarnings('ignore')
 from scipy import stats
 # from adaptive_weight_test import AdaptiveWeightTracker
 from adaptive_weight_test import AdaptiveWeightPrinter
+from temp_diff_analysis import analyze_temporal_difficulty, analyze_entity_novelty
 
 class GeneralCurriculumScheduler:
     """
@@ -1556,6 +1557,27 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
         print("Training completed successfully!")
         print("="*60)
         print('date time now is',datetime.now())
+
+        # === NEW: temporal difficulty analysis ===
+        print("\nRunning temporal difficulty correlation analysis...")
+        temporal_results_df, temporal_corr_stats = analyze_temporal_difficulty(
+            model,
+            train_list + valid_list,   # history_list, same as passed to test() above
+            test_list,
+            num_rels,
+            num_nodes,
+            use_cuda,
+            all_ans_list_test,
+            static_graph,
+            args,
+            save_prefix=f"{args.dataset}_temporal_difficulty"
+        )
+
+        novelty_df, novelty_stats = analyze_entity_novelty(
+            train_list, test_list,
+            save_prefix=f"{args.dataset}_entity_novelty"
+        )
+        # === end new ===
         
     return mrr_raw, mrr_filter
 
