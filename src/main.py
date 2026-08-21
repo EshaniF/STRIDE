@@ -264,14 +264,14 @@ class GeneralDifficultyAnalyzer:
                 )
                 
             else:  # 'all'
-                freq_weight = min(0.72, 0.36 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
-                temporal_weight = 0.76 - freq_weight
+                freq_weight = min(0.48, 0.24 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 0.84 - freq_weight
                 
                 combined_score = (
                     temporal_weight * temporal_score +
                     freq_weight * frequency_score +
-                    0.18 * degree_score +
-                    0.06 * size_score
+                    0.12 * degree_score +
+                    0.04 * size_score
                 )
             
             combined_score = np.clip(combined_score, 0.0, 1.0)
@@ -1174,7 +1174,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_rels = data.num_rels
 
     # Initialize general curriculum learning components
-    use_curriculum = getattr(args, 'use_curriculum', True)
+    use_curriculum = getattr(args, 'use_curriculum', False)
     
     if use_curriculum:
         curriculum_scheduler = GeneralCurriculumScheduler(
