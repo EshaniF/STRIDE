@@ -264,14 +264,14 @@ class GeneralDifficultyAnalyzer:
                 )
                 
             else:  # 'all'
-                freq_weight = min(0.48, 0.24 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
-                temporal_weight = 0.84 - freq_weight
+                freq_weight = min(0.6, 0.3 + self.entity_freq_std / max(self.entity_freq_mean, 1) * 0.1)
+                temporal_weight = 0.8 - freq_weight
                 
                 combined_score = (
                     temporal_weight * temporal_score +
                     freq_weight * frequency_score +
-                    0.12 * degree_score +
-                    0.04 * size_score
+                    0.15 * degree_score +
+                    0.05 * size_score
                 )
             
             combined_score = np.clip(combined_score, 0.0, 1.0)
@@ -813,9 +813,9 @@ class DifficultyVisualizer:
         
         ax1.plot(snapshot_indices, combined, color='black', linewidth=3, 
                 linestyle='--', label='Composite', alpha=0.9)
-        ax1.set_xlabel('Snapshot Index', fontsize=18, fontweight='bold')
-        ax1.set_ylabel('Difficulty Score', fontsize=18, fontweight='bold')
-        ax1.tick_params(axis='both', which='major', labelsize=18)
+        ax1.set_xlabel('Snapshot Index', fontsize=17)
+        ax1.set_ylabel('Normalised Curriculum Signal', fontsize=17)
+        ax1.tick_params(axis='both', which='major', labelsize=17)
         # ax1.set_title(dataset_name, fontsize=18, fontweight='bold')
         ax1.legend(prop={'size': 18, 'weight': 'bold'}, loc=2, ncol=3, mode="expand", borderaxespad=0., framealpha=0.5)
         ax1.grid(True, alpha=0.3)
@@ -838,16 +838,16 @@ class DifficultyVisualizer:
         ax2.axvline(mean_val, color='#C44E52', linestyle='--', linewidth=4, 
                    label=f'Mean: {mean_val:.2f}')
         
-        ax2.set_xlabel('Composite Difficulty Score', fontsize=18, fontweight='bold')
-        ax2.set_ylabel('Density', fontsize=18, fontweight='bold')
-        ax2.tick_params(axis='both', which='major', labelsize=18)
+        ax2.set_xlabel('Composite Difficulty Score', fontsize=18)
+        ax2.set_ylabel('Density', fontsize=17)
+        ax2.tick_params(axis='both', which='major', labelsize=17)
         # ax2.set_title('Combined Difficulty Distribution', fontsize=18, fontweight='bold')
         ax2.legend(prop={'size': 18, 'weight': 'bold'})
         ax2.grid(True, alpha=0.3)
         
-        plt.suptitle('Composite Difficulty Score Analysis', fontsize=14, fontweight='bold')
+        plt.suptitle('Composite Curriculum Signal Analysis', fontsize=14)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
         print(f"Saved combined difficulty to {save_path}")
         plt.close()
         
@@ -1174,7 +1174,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_rels = data.num_rels
 
     # Initialize general curriculum learning components
-    use_curriculum = getattr(args, 'use_curriculum', False)
+    use_curriculum = getattr(args, 'use_curriculum', True)
     
     if use_curriculum:
         curriculum_scheduler = GeneralCurriculumScheduler(
