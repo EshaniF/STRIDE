@@ -18,4 +18,4 @@ ax1.axis('off')
 ax2.imshow(img_bottom, aspect='auto')
 ax2.axis('off')
 
-plt.savefig('combined_two_datasets.tiff', dpi=600)
+plt.savefig('combined_two_datasets.png', dpi=600)
