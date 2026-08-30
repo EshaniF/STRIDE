@@ -776,7 +776,7 @@ class DifficultyVisualizer:
         
         return fig
     
-    def plot_combined_difficulty(self, save_path='combined_difficulty.png', figsize=(14, 6), dataset_name='ICEWS'):
+    def plot_combined_difficulty(self, save_path='combined_difficulty.png', figsize=(15, 6), dataset_name='ICEWS'):
         """
         Plot the final combined difficulty score compared to individual components.
         """
@@ -813,11 +813,11 @@ class DifficultyVisualizer:
         
         ax1.plot(snapshot_indices, combined, color='black', linewidth=3, 
                 linestyle='--', label='Composite', alpha=0.9)
-        ax1.set_xlabel('Snapshot Index', fontsize=17)
-        ax1.set_ylabel('Normalised Curriculum Signal', fontsize=17)
-        ax1.tick_params(axis='both', which='major', labelsize=17)
+        ax1.set_xlabel('Snapshot Index', fontsize=18)
+        ax1.set_ylabel('Normalised Curriculum Signal', fontsize=18)
+        ax1.tick_params(axis='both', which='major', labelsize=18)
         # ax1.set_title(dataset_name, fontsize=18, fontweight='bold')
-        ax1.legend(prop={'size': 18, 'weight': 'bold'}, loc=2, ncol=3, mode="expand", borderaxespad=0., framealpha=0.5)
+        ax1.legend(prop={'size': 18}, loc=2, ncol=3, mode="expand", borderaxespad=0., framealpha=0.5)
         ax1.grid(True, alpha=0.3)
         
         # Plot 2: Combined difficulty distribution
@@ -838,14 +838,15 @@ class DifficultyVisualizer:
         ax2.axvline(mean_val, color='#C44E52', linestyle='--', linewidth=4, 
                    label=f'Mean: {mean_val:.2f}')
         
-        ax2.set_xlabel('Composite Difficulty Score', fontsize=18)
-        ax2.set_ylabel('Density', fontsize=17)
-        ax2.tick_params(axis='both', which='major', labelsize=17)
+        ax2.set_xlabel('Composite Score', fontsize=18)
+        ax2.set_ylabel('Density', fontsize=18)
+        ax2.tick_params(axis='both', which='major', labelsize=18)
         # ax2.set_title('Combined Difficulty Distribution', fontsize=18, fontweight='bold')
-        ax2.legend(prop={'size': 18, 'weight': 'bold'})
+        ax2.legend(prop={'size': 18})
         ax2.grid(True, alpha=0.3)
         
-        plt.suptitle('Composite Curriculum Signal Analysis', fontsize=14)
+        # plt.suptitle('Composite Curriculum Signal Analysis', fontsize=18)
+        plt.suptitle(f'{dataset_name}', fontsize=18)
         plt.tight_layout()
         plt.savefig(save_path, dpi=600, bbox_inches='tight')
         print(f"Saved combined difficulty to {save_path}")
@@ -881,7 +882,7 @@ class DifficultyVisualizer:
         
         # 4. Combined difficulty
         self.plot_combined_difficulty(
-            save_path=os.path.join(output_dir, 'combined_difficulty.png'), dataset_name='icews'
+            save_path=os.path.join(output_dir, 'combined_difficulty.png'), dataset_name=dataset_name
         )
         
         print("\n" + "="*60)
