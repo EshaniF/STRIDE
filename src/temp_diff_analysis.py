@@ -1,44 +1,8 @@
 """
 temp_diff_analysis.py
 
-Empirically tests the "later snapshots are harder" assumption (temporal_score =
-t / (len(train_list)-1) in GeneralDifficultyAnalyzer) -- the single biggest
-complaint from R1 and R2. Correlates snapshot temporal position against
-per-snapshot filtered MRR under a *fixed, already-trained* model, so the
-result isn't confounded by training order (a snapshot trained on late in an
-epoch has seen more gradient steps than one trained on early -- evaluating
-train-time loss would conflate "intrinsically hard" with "recently updated
-on"). Evaluating a frozen model snapshot-by-snapshot on held-out data avoids
-that confound entirely.
+Empirically tests the "later snapshots are harder" assumption 
 
-FIX vs. the previous version of this file: `analyze_temporal_difficulty` was
-calling `model.predict(history_glist, num_rels, static_graph,
-test_triples_input, use_cuda)` and unpacking 3 return values. That is the
-RE-GCN/TIRGN-style signature, not this model's. The STRIDE/LogCL
-`RecurrentRGCN.predict()` (see `run_pipeline.py`'s `test()`) requires:
-
-    predict(que_pair, sub_graph, T_id, test_graph, num_rels, static_graph,
-            test_triplets, use_cuda) -> (all_triples, scores_en)
-
-i.e. two extra required arguments (`que_pair` from `e2r()`, `sub_graph` from
-`get_sample_from_history_graph3()`, which itself needs a `sr_to_sro` dict
-loaded from `../data/{dataset}/his_dict/train_s_r.npy`) and only 2 return
-values, not 3. As written before, this call would raise a TypeError the
-moment it ran -- the "empirical justification" was never actually being
-computed. This version reproduces the exact call sequence `test()` uses,
-including averaging raw + inverse-direction filtered MRR per snapshot, so the
-correlation is measured against the *same* metric reported in the main
-results table (not some other unreported quantity).
-
-Usage (matches the call already added to run_pipeline.py's run_experiment):
-
-    from temp_diff_analysis import analyze_temporal_difficulty, analyze_entity_novelty
-
-    results_df, corr_stats = analyze_temporal_difficulty(
-        model, train_list + valid_list, test_list, num_rels, num_nodes,
-        use_cuda, all_ans_list_test, static_graph, args,
-        save_prefix=f"{args.dataset}_temporal_difficulty"
-    )
 """
 
 import numpy as np
@@ -53,12 +17,6 @@ from rgcn.utils import build_sub_graph, build_graph, get_total_rank
 from rgcn import utils
 
 
-# ---------------------------------------------------------------------------
-# Local copies of the two helpers `model.predict()` depends on. These are
-# duplicated (not imported) from run_pipeline.py to avoid a circular import
-# (run_pipeline.py imports this module at the top). Keep in sync if you
-# change either function there.
-# ---------------------------------------------------------------------------
 
 def _e2r(triplets, num_rels, use_cuda, gpu):
     src, rel, dst = triplets.transpose()
@@ -133,20 +91,7 @@ def analyze_temporal_difficulty(
     save_prefix="temporal_difficulty",
     eval_bz=1000,
 ):
-    """
-    Evaluates the trained model snapshot-by-snapshot over `test_list` (same
-    protocol/model-call sequence as run_pipeline.py's `test()` in "test" mode,
-    minus the multi-step rollout), records per-snapshot filtered MRR
-    (raw+inverse averaged, matching the reported metric), and correlates
-    snapshot index against error.
 
-    Returns:
-        results_df: one row per test snapshot (snapshot_index, mrr_filter,
-                     mrr_raw, num_triples, error)
-        corr_stats: dict with spearman rho, p-value, and an explicit
-                    supports/contradicts/inconclusive verdict for the
-                    "later = harder" assumption.
-    """
     model.eval()
     input_list = [snap for snap in history_list[-args.test_history_len:]]
 
@@ -244,9 +189,7 @@ def analyze_temporal_difficulty(
         verdict = "INCONCLUSIVE"
         verdict_text = (
             "No statistically significant monotonic relationship between snapshot "
-            "index and error was found. Temporal position alone is a weak "
-            "difficulty proxy for this dataset; the composite score's other "
-            "components (frequency/degree/size) likely carry more signal here."
+            "index and error was found."
         )
 
     corr_stats = {
@@ -314,14 +257,7 @@ def _plot_temporal_difficulty(results_df, corr_stats, save_prefix, dataset_name=
 
 
 def analyze_entity_novelty(train_list, test_list, save_prefix="entity_novelty"):
-    """
-    Companion analysis (unchanged -- this one had no signature bug): tracks
-    the fraction of test-snapshot entities never seen in training, per
-    snapshot index. Rising novelty over time supports a churn-driven
-    explanation for later-snapshot difficulty (rather than pure temporal
-    recency), directly addressing the "more history = easier" counter-
-    hypothesis R1/R2 raised.
-    """
+
     seen_entities = set()
     for t, snap in enumerate(train_list):
         entities_in_snap = set(snap[:, 0]).union(set(snap[:, 2]))

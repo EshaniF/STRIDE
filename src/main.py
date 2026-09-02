@@ -1175,7 +1175,7 @@ def run_experiment(args, n_hidden=None, n_layers=None, dropout=None, n_bases=Non
     num_rels = data.num_rels
 
     # Initialize general curriculum learning components
-    use_curriculum = getattr(args, 'use_curriculum', True)
+    use_curriculum = getattr(args, 'use_curriculum', False)
     
     if use_curriculum:
         curriculum_scheduler = GeneralCurriculumScheduler(
